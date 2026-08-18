@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environment
+.venv/
+
+# Database files
+*.db
+
+# Data files
+data/
+
+# Output
+output/
+
+# State
+state/
+
+# Node
+node_modules/
+
+# OS
+.DS_Store
+Thumbs.db

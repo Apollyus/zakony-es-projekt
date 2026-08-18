@@ -1,14 +1,25 @@
-# Zpracování PDF zákonů — Plán implementace
+# Zpracování PDF/DOCX zákonů — Plán
 
 ## 1. Přehled projektu
 
 ### Cíl
-Stáhnout zákony ze Sbírky zákonů ČR (e-sbirka.gov.cz) ve formátu PDF, extrahovat z nich text s paragrafy, vytvořit embeddingy a vložit do Elasticsearch pro semantické vyhledávání (RAG).
+Stáhnout zákony ze Sbírky zákonů ČR (e-sbirka.gov.cz), extrahovat z nich text s paragrafy, vytvořit embeddingy a vložit do Elasticsearch pro semantické vyhledávání (RAG).
 
 ### Datový zdroj
 - **E-sbírka.gov.cz** — oficiální platforma Ministerstva vnitra ČR
 - **OpenData API:** `https://opendata.eselpoint.gov.cz/datove-sady-esbirka/002PravniAkt.json.gz`
-- **PDF download:** `https://e-sbirka.gov.cz/souborove-sluzby/soubory/{uuid}`
+- **DOCX download:** `https://e-sbirka.gov.cz/sbr-externi/stahni/informativni-zneni/{dokumentBaseId}/DOCX`
+
+### ⚠️ PDF jsou skeny — nepoužíváme!
+
+**PDF ze státní sbírky nejsou strojově čitelná** — jsou to skeny papíru (obrázky, ne text).
+Nelze z nich extrahovat text pro embedding.
+
+**Řešení:** Používáme DOCX dokumenty (informativní znění z e-Sbírky).
+- ✅ Textové, lze extrahovat
+- ✅ Obsahuje kompletní znění se všemi novelami
+- ✅ Oficiální konsolidovaná verze e-Sbírky
+- ❌ Není to pravě závazná verze (ale pro vyhledávání a RAG stačí)
 
 ### Právní status
 Data ze Sbírky zákonů jsou **svobodná úřední díla** (§ 3 odst. 1 AZ). Žádné licence, poplatky ani omezení nejsou potřeba.
@@ -26,7 +37,7 @@ Data ze Sbírky zákonů jsou **svobodná úřední díla** (§ 3 odst. 1 AZ). �
 │ 1. Načíst seznam zákonů z OpenData API                      │
 │ 2. Pro každý zákon:                                         │
 │    - Zkontrolovat SQLite checkpoint                         │
-│    - Stáhnout PDF z e-sbírka API                            │
+│    - Stáhnout PDF/DOCX z e-sbírka API                       │
 │    - Uložit do data/                                        │
 │    - Update SQLite: phase="downloaded"                      │
 │ 3. Logovat statistiky (staženo, chyby, přeskočeno)          │
@@ -49,24 +60,24 @@ Data ze Sbírky zákonů jsou **svobodná úřední díla** (§ 3 odst. 1 AZ). �
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### Data flow
+### Data flow (DOCX)
 
 ```
 002PravniAkt.json.gz ──→ seznam zákonů (citace, rok, cislo, doc_id)
-                              │
-                              ▼
-e-sbirka API ───────────→ PDF soubory (.pdf)
-                              │
-                              ▼
-pdfplumber ──────────────→ text + metadata
-                              │
-                              ▼
+        │
+        ▼
+e-sbirka API ───────────→ DOCX soubory (.docx)
+        │
+        ▼
+python-docx ────────────→ text + metadata
+        │
+        ▼
 Regex § \d+ ─────────────→ paragrafy chunky (max 2000 zn.)
-                              │
-                              ▼
+        │
+        ▼
 SentenceTransformer ────→ embedding vektory (768 dims)
-                              │
-                              ▼
+        │
+        ▼
 Elasticsearch ───────────→ index zakony (nested paragrafy + vector)
 ```
 
@@ -79,7 +90,7 @@ Elasticsearch ───────────→ index zakony (nested paragraf
 ```sql
 CREATE TABLE law_status (
     id_zakona TEXT PRIMARY KEY,
-    phase TEXT NOT NULL,          -- downloading, downloaded, processing, done, error
+    phase TEXT NOT NULL,          -- downloading, downloaded, processing, done, error, scan
     pdf_path TEXT,
     pdf_sha256 TEXT,
     paragraphs_count INTEGER,
@@ -92,10 +103,11 @@ CREATE TABLE law_status (
 | Hodnota | Význam |
 |---------|--------|
 | `downloading` | Zákony je právě stahováno |
-| `downloaded` | PDF je stažené a uloženo |
+| `downloaded` | PDF/DOCX je stažené a uloženo |
 | `processing` | Zákony je právě zpracováváno (Fáze 2) |
 | `done` | PDF zpracováno + vloženo do ES |
 | `error` | Došlo k chybě |
+| `scan` | PDF je sken (přeskočeno) |
 
 ### Resume behavior:
 - **Fáze 1 (download):** Pokud `phase="downloaded"`, přeskočit stahování
@@ -131,11 +143,11 @@ Chytne: `§ 1`, `§1,`, `§ 2;`, `§3.`
 ## 5. Elasticsearch
 
 ### Index: `zakony`
-- Mapping viz `ES_DOKUMENTACE.md`
+- Mapping viz `docs/ES_DOKUMENTACE.md`
 - Nested paragrafy s vektory
 - dims: 768, similarity: cosine, int8_hnsw
 
-### ES dokument (PDF paragraf)
+### ES dokument (PDF/DOCX paragraf)
 ```json
 {
   "id_zakona": "89/2012 Sb.",
@@ -184,8 +196,7 @@ pdfplumber>=0.9.0
 ## 8. TODO Checklist
 
 ### [x] 1. Příprava
-- [x] Vytvořit `zpracovani-pdf/zpracovani_pdf_ingest.py`
-- [x] Smazat `stahovacka.py` (integrováno novým skriptem)
+- [x] Vytvořit `zpracovani-pdf-docx/zpracovani_pdf_ingest.py`
 - [x] Update `requirements.txt` → přidat `pdfplumber`
 - [x] Otestovat import z pipeline.py
 
@@ -218,8 +229,14 @@ pdfplumber>=0.9.0
 - [x] `--skip-process` (jen download fáze)
 - [x] `--state-db` (cesta k SQLite state databázi)
 
-### [ ] 6. Testování
-- [ ] Otestovat na 10 zákonech
+### [ ] 6. DOCX processing (další fáze)
+- [ ] Přidat `python-docx` do requirements.txt
+- [ ] Implementovat parsing DOCX (extrakce textu a paragrafů)
+- [ ] Implementovat processing pipeline (stejný jako PDF)
+- [ ] Otestovat stažení DOCX → embedding → ES
+
+### [ ] 7. Testování
+- [ ] Otestovat na 10 zákonech (PDF)
 - [ ] Otestovat resume po přerušení
 - [ ] Ověřit ES ingest + search
 
@@ -227,7 +244,7 @@ pdfplumber>=0.9.0
 
 ## 9. Implementační detaily
 
-### Soubor: `zpracovani-pdf/zpracovani_pdf_ingest.py`
+### Soubor: `zpracovani-pdf-docx/zpracovani_pdf_ingest.py`
 
 **Struktura:**
 ```
@@ -265,19 +282,19 @@ source .venv/bin/activate
 pip install pdfplumber
 
 # Plný workflow (download + processing)
-python3 zpracovani-pdf/zpracovani_pdf_ingest.py --limit 100
+python3 zpracovani-pdf-docx/zpracovani_pdf_ingest.py --limit 100
 
 # Pouze processing (pokud jsou PDF už stažené)
-python3 zpracovani-pdf/zpracovani_pdf_ingest.py --skip-download --workers 4
+python3 zpracovani-pdf-docx/zpracovani_pdf_ingest.py --skip-download --workers 4
 
 # Pouze download
-python3 zpracovani-pdf/zpracovani_pdf_ingest.py --skip-process --limit 50
+python3 zpracovani-pdf-docx/zpracovani_pdf_ingest.py --skip-process --limit 50
 
 # Vlastní ES URL a workers
-python3 zpracovani-pdf/zpracovani_pdf_ingest.py --es-url http://localhost:9200 --workers 8
+python3 zpracovani-pdf-docx/zpracovani_pdf_ingest.py --es-url http://localhost:9200 --workers 8
 
 # Resume po přerušení — stačí spustit znovu, skript pokračuje tam kde skončil
-python3 zpracovani-pdf/zpracovani_pdf_ingest.py --limit 100
+python3 zpracovani-pdf-docx/zpracovani_pdf_ingest.py --limit 100
 ```
 
 ---
@@ -304,3 +321,4 @@ python3 zpracovani-pdf/zpracovani_pdf_ingest.py --limit 100
 *Plán vytvořen: 2025-08-14*
 *Verze: 1.1*
 *Skript vytvořen: 2025-08-14*
+*Poslední aktualizace: 2026-08-18 (PDF pozastaveno, přechod na DOCX)*

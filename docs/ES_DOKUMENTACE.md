@@ -124,7 +124,7 @@ Paragrafy jsou v `nested` poli:
   - Suggestions (doplnění)
   - Re-ranking (přeskupení výsledků)
 
-## VZOREK DOKUMENTU
+## VZOREK DOKUMENTU (JSON GLMF)
 
 ```json
 {
@@ -139,7 +139,7 @@ Paragrafy jsou v `nested` poli:
       "iris": "esel-esb:eli/cz/sb/1918/8/0000-00-00/dokument/norma/par_1",
       "eli": "/eli/cz/sb/1918/8/0000-00-00/dokument/norma/par_1",
       "citace": "§ 1",
-      "text": "§ 1. Účelem tohoto zákona je...",
+      "text": "§ 1. Účelem tohoto zákona je... [kombinovaný text z Paragraf + Odstavec_Dc fragmentů]",
       "hierarchie": "/2/1/",
       "fragment_id": 8,
       "typ": "Paragraf",
@@ -148,6 +148,32 @@ Paragrafy jsou v `nested` poli:
   ]
 }
 ```
+
+## VZOREK DOKUMENTU (DOCX)
+
+```json
+{
+  "id_zakona": "1993_1",
+  "akt_citace": "1/1993 Sb.",
+  "akt_nazev": "Ústava České republiky",
+  "rok": 1993,
+  "datum_od": null,
+  "datum_do": null,
+  "je_zrusen": false,
+  "sbírka": "",
+  "paragrafy": [
+    {
+      "citace": "§ 1",
+      "text": "Česko je ústavní, demokratický, právní a sociální stát...",
+      "typ": "DOCX",
+      "vektor": [0.05, -0.12, 0.03, ...]
+    }
+  ]
+}
+```
+
+> **Poznámka:** DOCX dokumenty mají jednodušší strukturu — nemají iris/eli/hierarchie/fragment_id.
+> ID zákona se tvoří z roku a čísla (např. "1993_1"). Typ je vždy "DOCX".
 
 ## PRÍKLAD VYHLEDÁVÁNÍ
 
@@ -182,7 +208,34 @@ Paragrafy jsou v `nested` poli:
 }
 ```
 
-## STATISTIKY
-- Celkem dokumentů (full ingest): ~X (záleží na datech)
-- Shard size: ~1 shard pro všechny data
-- Memory footprint: ~GB RAM pro index + model
+## AKTUÁLNÍ STATISTIKY (2026-08-18)
+
+### JSON GLMF Pipeline
+- Index: `index-zakony-jsony`
+- Dokumenty: 2665 (test na 1000 zákonech)
+- Status: DATA NAČTENÁ, ALE TEXT PARAGRAFŮ JE PRÁZDNÝ
+- Problém: původní kód dělal jeden ES dokument na fragment, ne na paragraf
+- Řešení: PRIPRAVENO — pipeline.py obsahuje grouping logiku (kombinace Paragraf + Odstavec_Dc)
+
+### DOCX Pipeline
+- Status: DOCX staženo (5 testovacích souborů), processing neimplementován
+- Data: tests-and-previews/, tests-n-previews/
+
+## ZDROJE DAT
+
+| Způsob | Formát | Soubory | Velikost |
+|--------|--------|---------|----------|
+| JSON GLMF | JSON | 001, 003, 004 | 1.9 GB |
+| DOCX | DOCX | Informativní znění | ~50 KB/test |
+
+## DATOVÉ Soubory
+
+### GLMF data (JSON)
+- **001PravniAktZneni.json.gz** — metadata zákonů (citace, název, rok, datum)
+- **003PravniAktZneniFragment.json.gz** — strom fragmentů (hierarchie, citace)
+- **004PravniAktFragment.json.gz** — typy fragmentů (Paragraf, Odstavec_Dc, Pozemek)
+
+### DOCX data
+- Stahují se z e-Sbírky API (informativní znění)
+- API endpoint: `/sbr-externi/stahni/informativni-zneni/{dokumentBaseId}/DOCX`
+- Obsahují kompletní text zákona včetně novel

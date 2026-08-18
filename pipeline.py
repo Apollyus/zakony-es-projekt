@@ -8,7 +8,7 @@ Použití:
     process_laws(files, es_url="http://localhost:9200", num_workers=7, ...)
 """
 
-import argparse, gzip, hashlib, json, logging, os, sqlite3, sys, time
+import argparse, gzip, hashlib, json, logging, os, re, sqlite3, sys, time
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
@@ -28,7 +28,7 @@ log = logging.getLogger(__name__)
 INDEX_NAME = "zakony"
 ES_HOST = "http://localhost:9200"
 EMBEDDING_MODEL = "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
-VALID_TYPES = {"Paragraf", "Pozemek"}
+VALID_TYPES = {"Paragraf", "Odstavec_Dc", "Pozemek"}
 
 # Fields pro každý typ souboru
 F001 = {
@@ -330,20 +330,31 @@ def embed_and_bulk_insert(
     return success, errors
 
 
+def extract_paragraf_number(hierarchie: str) -> str:
+    """Extrahuje cislo paragrafu z hierarchie (napr. '/2/1/1/' -> '1', '/2/3/' -> '3')."""
+    if not hierarchie:
+        return ""
+    match = re.search(r'/2/(\d+)/', hierarchie + '/')
+    if match:
+        return match.group(1)
+    return ""
+
+
 def _worker_process_batch(args):
     """
     Worker funkce pro parallel processing.
-    Zpracuje jeden batch fragmentů z 003.
+    Zpracuje jednu batch grup (paragrafy) z 003.
     
     Každý worker si vytvoří vlastní embedding model a ES connection.
     
     Args:
-        args: Tuple (batch_index, batch_items, laws_dict, db_path, index_name, bulk_batch_size)
+        args: Tuple (batch_index, batch_groups, laws_dict, db_path, index_name, bulk_batch_size)
+        batch_groups: List of (law_iri, paragraf_number, items)
     
     Returns:
         Tuple (batch_index, success_count, error_count, processed_iris)
     """
-    batch_idx, batch_items, laws, db_path, index_name, bulk_batch_size = args
+    batch_idx, batch_groups, laws, db_path, index_name, bulk_batch_size = args
     
     # Local embedding engine
     eng = SentenceTransformer(EMBEDDING_MODEL)
@@ -351,58 +362,83 @@ def _worker_process_batch(args):
     # Local ES connection
     es = Elasticsearch([ES_HOST], request_timeout=60, retry_on_timeout=True, max_retries=3)
     
-    # Collect fragment IDs for batch lookup
-    b_fids = []
-    f2items = defaultdict(list)
-    
-    for iri, item, law_iri in batch_items:
-        fid = item.get("právní-akt-fragment", {}).get("fragment-id")
-        if fid is not None:
-            b_fids.append(fid)
-            f2items[fid].append((iri, item, law_iri))
-    
-    if not b_fids:
-        return batch_idx, 0, 0, []
-    
-    # Lookup types in SQLite
-    tmap = sqlite_lookup(db_path, b_fids)
-    
-    # Build documents
     batch_docs = []
     processed_iris = []
     
-    for fid, items in f2items.items():
-        typ, text = tmap.get(fid, ("", ""))
-        if typ not in VALID_TYPES:
+    for law_iri, paragraf_number, items in batch_groups:
+        # Collect fragment IDs for this paragraf
+        b_fids = []
+        item_list = []
+        for iri, item, liri in items:
+            fid = item.get("právní-akt-fragment", {}).get("fragment-id")
+            if fid is not None:
+                b_fids.append(fid)
+                item_list.append((iri, item, liri, fid))
+        
+        if not b_fids:
             continue
         
-        for iri, item, law_iri in items:
+        # Lookup types in SQLite
+        tmap = sqlite_lookup(db_path, b_fids)
+        
+        # Collect texts for this paragraf
+        texts = []
+        paragraf_eli = ""
+        paragraf_hierarchie = ""
+        paragraf_citace = ""
+        fragment_id = None
+        iris = []
+        
+        for iri, item, liri, fid in item_list:
+            typ, text = tmap.get(fid, ("", ""))
+            
+            if typ not in VALID_TYPES:
+                continue
+            
             if not text or len(text.strip()) < 5:
                 text = item.get("znění-fragment-citace-text", "")
                 if not text or len(text.strip()) < 5:
                     continue
             
-            law = laws[law_iri]
-            batch_docs.append({
-                "id_zakona": law_iri,
-                "akt_citace": law["akt_citace"],
-                "akt_nazev": law["akt_nazev"],
-                "rok": law["rok"],
-                "datum_od": law["datum_od"],
-                "datum_do": law["datum_do"],
-                "je_zrusen": law["je_zrusen"],
-                "sbírka": law["sbírka"],
-                "paragrafy": [{
-                    "iris": iri,
-                    "eli": item.get("znění-fragment-eli", ""),
-                    "citace": item.get("znění-fragment-citace", ""),
-                    "text": text.strip(),
-                    "hierarchie": item.get("znění-fragment-hierarchie", ""),
-                    "fragment_id": item.get("znění-fragment-id"),
-                    "typ": typ,
-                }],
-            })
-            processed_iris.append(iri)
+            if typ == "Paragraf":
+                texts.insert(0, text.strip())
+            else:
+                texts.append(text.strip())
+            
+            if not paragraf_eli:
+                paragraf_eli = item.get("znění-fragment-eli", "")
+                paragraf_hierarchie = item.get("znění-fragment-hierarchie", "")
+                paragraf_citace = item.get("znění-fragment-citace", "")
+                fragment_id = item.get("znění-fragment-id")
+            
+            iris.append(iri)
+        
+        if not texts:
+            continue
+        
+        law = laws[law_iri]
+        combined_text = " ".join(texts)
+        
+        batch_docs.append({
+            "id_zakona": law_iri,
+            "akt_citace": law["akt_citace"],
+            "akt_nazev": law["akt_nazev"],
+            "rok": law["rok"],
+            "datum_od": law["datum_od"],
+            "datum_do": law["datum_do"],
+            "je_zrusen": law["je_zrusen"],
+            "sbírka": law["sbírka"],
+            "paragrafy": [{
+                "iris": iris[0] if iris else "",
+                "eli": paragraf_eli,
+                "citace": paragraf_citace or f"§ {paragraf_number}",
+                "text": combined_text,
+                "hierarchie": paragraf_hierarchie,
+                "fragment_id": fragment_id,
+                "typ": "Paragraf",
+            }],
+        })
+        processed_iris.extend(iris)
     
     # Embed and insert
     success, errors = embed_and_bulk_insert(
@@ -505,14 +541,14 @@ def process_laws(
         log.info("\nDRY RUN - hotovo!")
         return {"laws": len(laws), "dry_run": True}
     
-    # Stream 003 and split into chunks for parallel processing
-    log.info(f"\nStreamuji 003 a rozdělujeme na {chunk_size}-item chunky...")
+    # Stream 003 and group by (law_iri, paragraf_number) to keep paragrafs intact
+    log.info(f"\nStreamuji 003 a seskupuji podle paragrafů...")
     
-    # Odhad max položek z 003: max_laws * 100 fragmentů/law
     max_003 = max_laws * 100 if max_laws > 0 else 0
     
-    chunks = []
-    current_chunk = []
+    groups = []
+    current_key = None
+    current_items = []
     total_processed = 0
     
     for fp in cat["003"]:
@@ -531,23 +567,46 @@ def process_laws(
             if not law_iri:
                 continue
             
-            current_chunk.append((iri, item, law_iri))
+            paragraf_number = extract_paragraf_number(item.get("znění-fragment-hierarchie", ""))
+            
+            if not paragraf_number:
+                continue
+            
+            key = (law_iri, paragraf_number)
+            
+            if key != current_key:
+                if current_key is not None:
+                    groups.append((current_key[0], current_key[1], current_items))
+                current_key = key
+                current_items = []
+            
+            current_items.append((iri, item, law_iri))
             total_processed += 1
             
-            if len(current_chunk) >= chunk_size:
-                chunks.append(current_chunk)
-                current_chunk = []
-                # Ukládáme checkpoint každých N chunků
+            if total_processed % 10000 == 0:
                 checkpoint.save()
         
         if not checkpoint.file_done(bn):
             checkpoint.mark_file(bn, sha)
     
-    # Add remaining items
+    if current_items and current_key:
+        groups.append((current_key[0], current_key[1], current_items))
+    
+    log.info(f"Seskupeno do {len(groups)} paragrafů, celkem {total_processed} položek")
+    
+    # Chunk groups (each group = one paragraf, never split across chunks)
+    chunks = []
+    current_chunk = []
+    for group in groups:
+        current_chunk.append(group)
+        if len(current_chunk) >= chunk_size:
+            chunks.append(current_chunk)
+            current_chunk = []
+    
     if current_chunk:
         chunks.append(current_chunk)
     
-    log.info(f"Rozděleno na {len(chunks)} chunků, celkem {total_processed} položek")
+    log.info(f"Rozděleno na {len(chunks)} chunků")
     
     # Process chunks in parallel
     total_success = 0

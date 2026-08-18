@@ -30,3 +30,5 @@ node_modules/
 # OS
 .DS_Store
 Thumbs.db
+zakony/
+zakony_json/

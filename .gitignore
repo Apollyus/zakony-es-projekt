@@ -8,6 +8,8 @@ build/
 
 # Virtual environment
 .venv/
+venv/
+vnev/
 
 # Database files
 *.db
@@ -20,6 +22,7 @@ output/
 
 # State
 state/
+state.json
 
 # Node
 node_modules/

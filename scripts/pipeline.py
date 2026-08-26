@@ -355,28 +355,20 @@ def _init_worker(laws_path: str):
         _LAWS = json.load(f)
 
 
-def _worker_process_batch(args):
+def build_batch_docs(spool_path: str, db_path: str) -> Tuple[List[dict], List[str]]:
     """
-    Worker funkce pro parallel processing.
-    Zpracuje jeden chunk paragrafů ze spool souboru (JSONL na disku).
+    Z build spool chunku (JSONL) postaví dokumenty připravené k embeddingu.
     
-    Každý worker si vytvoří vlastní embedding model a ES connection.
+    Sdílená logika pro přímý ingest (process_laws) i offline export
+    (export_embeddings.py) — garantuje totožné výsledky.
     
     Args:
-        args: Tuple (batch_index, spool_path, db_path, index_name, bulk_batch_size)
         spool_path: Cesta k JSONL souboru s chunkem paragrafů
+        db_path: Cesta k SQLite DB s typy fragmentů (004)
     
     Returns:
-        Tuple (success_count, error_count, processed_iris)
+        Tuple (batch_docs, processed_iris)
     """
-    batch_idx, spool_path, db_path, index_name, bulk_batch_size = args
-    
-    # Local embedding engine
-    eng = SentenceTransformer(EMBEDDING_MODEL)
-    
-    # Local ES connection
-    es = Elasticsearch([ES_HOST], request_timeout=60, retry_on_timeout=True, max_retries=3)
-    
     laws = _LAWS
     batch_docs = []
     processed_iris = []
@@ -461,6 +453,33 @@ def _worker_process_batch(args):
                 }],
             })
             processed_iris.extend(iris)
+    
+    return batch_docs, processed_iris
+
+
+def _worker_process_batch(args):
+    """
+    Worker funkce pro parallel processing.
+    Zpracuje jeden chunk paragrafů ze spool souboru (JSONL na disku).
+    
+    Každý worker si vytvoří vlastní embedding model a ES connection.
+    
+    Args:
+        args: Tuple (batch_index, spool_path, db_path, index_name, bulk_batch_size)
+        spool_path: Cesta k JSONL souboru s chunkem paragrafů
+    
+    Returns:
+        Tuple (success_count, error_count, processed_iris)
+    """
+    batch_idx, spool_path, db_path, index_name, bulk_batch_size = args
+    
+    # Local embedding engine
+    eng = SentenceTransformer(EMBEDDING_MODEL)
+    
+    # Local ES connection
+    es = Elasticsearch([ES_HOST], request_timeout=60, retry_on_timeout=True, max_retries=3)
+    
+    batch_docs, processed_iris = build_batch_docs(spool_path, db_path)
     
     # Embed and insert
     success, errors = embed_and_bulk_insert(
@@ -582,94 +601,6 @@ def process_laws(
     with open(laws_path, "w", encoding="utf-8") as f:
         json.dump(laws, f, ensure_ascii=False)
     
-    def stream_spool_chunks():
-        """Streamuje 003, seskupuje fragmenty podle (zákon, §) a zapisuje
-        plné chunky jako JSONL soubory do spool_dir.
-        
-        Yield: (chunk_path, počet_paragrafů_v_chunku)
-        """
-        current_key = None
-        current_items = []
-        chunk_idx = 0
-        out_f = None
-        n_groups = 0
-        total_processed = 0
-        
-        for fp in cat["003"]:
-            sha, bn = file_sha256(fp), os.path.basename(fp)
-            if checkpoint.file_done(bn):
-                log.info(f"Přeskočen zpracovaný soubor: {bn}")
-                continue
-            
-            log.info(f"Čtu 003: {bn}")
-            for item in stream_items(fp, "právní-akt-znění-fragment", F003, max_003):
-                iri = item.get("iri")
-                if not iri or checkpoint.iri_done(iri):
-                    continue
-                
-                did = item.get("znění-dokument-id")
-                law_iri = didx.get(did) if did else None
-                if not law_iri:
-                    continue
-                
-                paragraf_number = extract_paragraf_number(item.get("znění-fragment-hierarchie", ""))
-                if not paragraf_number:
-                    continue
-                
-                key = (law_iri, paragraf_number)
-                
-                if key != current_key:
-                    if current_key is not None:
-                        if out_f is None:
-                            out_f = open(
-                                os.path.join(spool_dir, f"chunk_{chunk_idx:06d}.jsonl"),
-                                "w", encoding="utf-8",
-                            )
-                            n_groups = 0
-                        out_f.write(json.dumps({
-                            "law": current_key[0],
-                            "para": current_key[1],
-                            "items": current_items,
-                        }, ensure_ascii=False) + "\n")
-                        n_groups += 1
-                        
-                        if n_groups >= chunk_size:
-                            path = out_f.name
-                            out_f.close()
-                            out_f = None
-                            yield path, n_groups
-                            chunk_idx += 1
-                    
-                    current_key = key
-                    current_items = []
-                
-                current_items.append((iri, item, law_iri))
-                total_processed += 1
-                
-                if total_processed % 10000 == 0:
-                    checkpoint.save()
-            
-            checkpoint.mark_file(bn, sha)
-        
-        # Poslední grupa / nekompletní chunk
-        if current_key is not None:
-            if out_f is None:
-                out_f = open(
-                    os.path.join(spool_dir, f"chunk_{chunk_idx:06d}.jsonl"),
-                    "w", encoding="utf-8",
-                )
-            out_f.write(json.dumps({
-                "law": current_key[0],
-                "para": current_key[1],
-                "items": current_items,
-            }, ensure_ascii=False) + "\n")
-            n_groups += 1
-        
-        if out_f is not None:
-            path = out_f.name
-            out_f.close()
-            yield path, n_groups
-    
     checkpoint.save()
     
     # Process chunks in parallel — workery dostávají jen cesty k souborům,
@@ -723,7 +654,10 @@ def process_laws(
                             f.cancel()
                         raise RuntimeError("Málo místa na disku — ukončuji, ať se nepřeplní disk")
         
-        for spool_file, n_paras in stream_spool_chunks():
+        for spool_file, n_paras in iter_spool_chunks(
+            cat, didx, checkpoint, spool_dir,
+            max_items=max_003, chunk_size=chunk_size,
+        ):
             while len(pending) >= max_pending:
                 reap_done()
             
@@ -754,6 +688,105 @@ def process_laws(
         "total_docs": total_docs,
         "errors": total_errors,
     }
+
+
+def iter_spool_chunks(
+    cat: Dict[str, List[str]],
+    didx: Dict[str, str],
+    checkpoint: Checkpoint,
+    spool_dir: str,
+    max_items: int = 0,
+    chunk_size: int = 100,
+):
+    """
+    Streamuje 003, seskupuje fragmenty podle (zákon, §) a zapisuje
+    plné chunky jako JSONL soubory do spool_dir.
+    
+    Sdíleno mezi přímý ingest (process_laws) i offline export
+    (export_embeddings.py) — garantuje totožné grupování paragrafů.
+    
+    Yield: (chunk_path, počet_paragrafů_v_chunku)
+    """
+    current_key = None
+    current_items = []
+    chunk_idx = 0
+    out_f = None
+    n_groups = 0
+    total_processed = 0
+    
+    for fp in cat["003"]:
+        sha, bn = file_sha256(fp), os.path.basename(fp)
+        if checkpoint.file_done(bn):
+            log.info(f"Přeskočen zpracovaný soubor: {bn}")
+            continue
+        
+        log.info(f"Čtu 003: {bn}")
+        for item in stream_items(fp, "právní-akt-znění-fragment", F003, max_items):
+            iri = item.get("iri")
+            if not iri or checkpoint.iri_done(iri):
+                continue
+            
+            did = item.get("znění-dokument-id")
+            law_iri = didx.get(did) if did else None
+            if not law_iri:
+                continue
+            
+            paragraf_number = extract_paragraf_number(item.get("znění-fragment-hierarchie", ""))
+            if not paragraf_number:
+                continue
+            
+            key = (law_iri, paragraf_number)
+            
+            if key != current_key:
+                if current_key is not None:
+                    if out_f is None:
+                        out_f = open(
+                            os.path.join(spool_dir, f"chunk_{chunk_idx:06d}.jsonl"),
+                            "w", encoding="utf-8",
+                        )
+                        n_groups = 0
+                    out_f.write(json.dumps({
+                        "law": current_key[0],
+                        "para": current_key[1],
+                        "items": current_items,
+                    }, ensure_ascii=False) + "\n")
+                    n_groups += 1
+                    
+                    if n_groups >= chunk_size:
+                        path = out_f.name
+                        out_f.close()
+                        out_f = None
+                        yield path, n_groups
+                        chunk_idx += 1
+                
+                current_key = key
+                current_items = []
+            
+            current_items.append((iri, item, law_iri))
+            total_processed += 1
+            
+            if total_processed % 10000 == 0:
+                checkpoint.save()
+        
+        checkpoint.mark_file(bn, sha)
+    
+    # Poslední grupa / nekompletní chunk
+    if current_key is not None:
+        if out_f is None:
+            out_f = open(
+                os.path.join(spool_dir, f"chunk_{chunk_idx:06d}.jsonl"),
+                "w", encoding="utf-8",
+            )
+        out_f.write(json.dumps({
+            "law": current_key[0],
+            "para": current_key[1],
+            "items": current_items,
+        }, ensure_ascii=False) + "\n")
+    
+    if out_f is not None:
+        path = out_f.name
+        out_f.close()
+        yield path, n_groups
 
 
 def categorize_files(files: List[str]) -> Dict[str, List[str]]:

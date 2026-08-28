@@ -14,7 +14,9 @@ from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from pathlib import Path
 from typing import Dict, List, Set, Tuple
 
+import html as html_lib
 import ijson
+import re
 from elasticsearch import Elasticsearch, helpers
 from sentence_transformers import SentenceTransformer
 
@@ -29,6 +31,21 @@ INDEX_NAME = "zakony"
 ES_HOST = "http://localhost:9200"
 EMBEDDING_MODEL = "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
 VALID_TYPES = {"Paragraf", "Odstavec_Dc", "Pozemek"}
+
+_MATH_TAGS = re.compile(r'<(mi|mn|mo|mrow|msub|mfrac|mtext|math|table|tbody|tr|td|div|span)[^>]*>.*?</\1>', re.DOTALL)
+_HTML_TAGS = re.compile(r'<br\s*/?>|<!--.*?-->|<strong>|</strong>|<u>|</u>|<s>|</s>|<q>|</q>', re.IGNORECASE)
+_ALL_TAGS = re.compile(r'<[^>]+>')
+
+
+def clean_text(text: str) -> str:
+    if not text:
+        return ""
+    text = _MATH_TAGS.sub('', text)
+    text = _HTML_TAGS.sub(' ', text)
+    text = _ALL_TAGS.sub('', text)
+    text = html_lib.unescape(text)
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
 
 # Fields pro každý typ souboru
 F001 = {
@@ -409,9 +426,11 @@ def build_batch_docs(spool_path: str, db_path: str) -> Tuple[List[dict], List[st
                 if typ not in VALID_TYPES:
                     continue
                 
-                if not text or len(text.strip()) < 5:
-                    text = item.get("znění-fragment-citace-text", "")
-                    if not text or len(text.strip()) < 5:
+                text = clean_text(text)
+                
+                if not text or len(text) < 5:
+                    text = clean_text(item.get("znění-fragment-citace-text", ""))
+                    if not text or len(text) < 5:
                         continue
                 
                 if typ == "Paragraf":

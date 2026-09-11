@@ -12,13 +12,15 @@ import argparse, gzip, hashlib, json, logging, os, re, shutil, sqlite3, sys, tim
 from collections import defaultdict
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from pathlib import Path
-from typing import Dict, List, Set, Tuple
+from typing import TYPE_CHECKING, Dict, List, Set, Tuple
 
 import html as html_lib
 import ijson
 import re
 from elasticsearch import Elasticsearch, helpers
-from sentence_transformers import SentenceTransformer
+
+if TYPE_CHECKING:
+    from sentence_transformers import SentenceTransformer
 
 logging.basicConfig(
     level=logging.INFO,
@@ -292,7 +294,7 @@ def create_es_index(es: Elasticsearch, index_name: str, force: bool = False):
 def embed_and_bulk_insert(
     batch_docs: List[dict],
     es: Elasticsearch,
-    eng: SentenceTransformer,
+    eng: "SentenceTransformer",
     index_name: str,
     bulk_batch_size: int = 50
 ) -> Tuple[int, List]:
@@ -493,6 +495,8 @@ def _worker_process_batch(args):
     batch_idx, spool_path, db_path, index_name, bulk_batch_size = args
     
     # Local embedding engine
+    from sentence_transformers import SentenceTransformer
+
     eng = SentenceTransformer(EMBEDDING_MODEL)
     
     # Local ES connection

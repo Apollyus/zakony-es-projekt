@@ -98,6 +98,7 @@ python zpracovani-pdf-docx/stahni-docx.py --search "ústava" --limit 5
 
 - [Elasticsearch mapping a analyzátory](docs/ES_DOKUMENTACE.md)
 - [e-Sbírka API reference](docs/e-sbirka-api.md)
+- [Právní analýza využití dat z e-Sbírky (DC Ústeckého kraje)](docs/pravni-analyza-e-sbirka.md)
 - [JSON pipeline detail](zpracovani-json/README.md)
 - [PDF/DOCX pipeline detail](zpracovani-pdf-docx/README.md)
 - [API Notebook (PDF strategie)](zpracovani-pdf-docx/NOTEBOOK.md)

@@ -28,7 +28,6 @@ import sys
 from pathlib import Path
 
 import numpy as np
-from docx import Document
 
 # Stejné hodnoty jako v pipeline.py — bez importu (ten by táhl torch i ES)
 EMBEDDING_MODEL = "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
@@ -56,7 +55,7 @@ CHUNK_CHARS = 2000
 # Parsing DOCX → logické celky
 # =====================================================================
 
-def extract_units(texts: list) -> list:
+def extract_units(texts: list, overlap: int = 0) -> list:
     """Rozdělí odstavce dokumentu na celky podle nadpisů (§ / Článek / římské)."""
     units, current_citace, current_lines = [], None, []
 
@@ -83,12 +82,29 @@ def extract_units(texts: list) -> list:
 
     result = []
     for u in units or [{"citace": "", "text": ""}]:
-        result.extend(chunk_long_text(u["text"], citace=u["citace"]))
+        result.extend(chunk_long_text(u["text"], citace=u["citace"],
+                                      overlap=overlap))
     return [r for r in result if r["text"]]
 
 
-def chunk_long_text(text: str, citace: str = "") -> list:
-    """Dlouhé celky rozdělí na chunky po ~CHUNK_CHARS znacích."""
+def _overlap_tail(buf: str, overlap: int) -> str:
+    """Konec buf (celé věty) o délce ~overlap znaků, jako začátek dalšího chunku."""
+    if overlap <= 0:
+        return ""
+    tail = ""
+    for s in reversed(re.split(r"(?<=[.!?])\s+", buf.strip())):
+        if tail and len(tail) + len(s) + 1 > overlap:
+            break
+        tail = s + " " + tail
+    return tail if len(tail.strip()) < len(buf.strip()) else ""
+
+
+def chunk_long_text(text: str, citace: str = "", overlap: int = 0) -> list:
+    """Dlouhé celky rozdělí na chunky po ~CHUNK_CHARS znacích.
+
+    overlap > 0: každý další chunk začíná posledními větami předchozího
+    chunku o celkové délce ~overlap znaků (klouzavé okno po větách).
+    """
     if len(text) <= CHUNK_CHARS * 1.5:
         return [{"citace": citace or "Text", "text": text}]
     sentences = re.split(r"(?<=[.!?])\s+", text)
@@ -96,7 +112,7 @@ def chunk_long_text(text: str, citace: str = "") -> list:
     for s in sentences:
         if buf and len(buf) + len(s) > CHUNK_CHARS:
             chunks.append(buf.strip())
-            buf = ""
+            buf = _overlap_tail(buf, overlap)
         buf += s + " "
     if buf.strip():
         chunks.append(buf.strip())
@@ -106,19 +122,37 @@ def chunk_long_text(text: str, citace: str = "") -> list:
 
 
 def docx_to_texts(path: Path) -> list:
+    # docx jen pro parse fázi — embed/import bez wordů (a bez python-docx)
+    from docx import Document
     doc = Document(str(path))
     return [t.strip() for t in (p.text for p in doc.paragraphs) if t.strip()]
 
 
 def filename_to_meta(name: str):
-    """'1_1993.docx' → ('1993_1', 1993, 'sb'); '5_2000m.s..docx' → sm."""
+    """Rozparsuje název na (id_zakona, rok, sbirka, cislo).
+
+    Formáty vzniklé ze stahni-docx.py filename_from_citace:
+      '1_1993.docx'         → sb,  cislo '1'     (key /sb/1993/1)
+      'n100_1967.docx'      → sb,  cislo 'n100'  (key /sb/1967/n100)
+      'o9_2002.docx'        → sb,  cislo 'o9'    (key /sb/2002/o9)
+      '1_2000m.s..docx'     → sm,  cislo '1'     (key /sm/2000/1)
+      'n1_2023m.s..docx'    → sm,  cislo 'n1'    (key /sm/2023/n1)
+      'n1_1945Ú.l.I.docx'   → ul1, cislo 'n1'    (key /ul1/1945/n1)
+      'n1_1953Ú.l..docx'    → ul0, cislo 'n1'    (key /ul0/1953/n1)
+    """
     base = name[:-5] if name.endswith(".docx") else name
-    m = re.match(r"^(\d+)_(\d{4})(.*)$", base)
+    m = re.match(r"^([a-zA-Z]?)(\d+)_(\d{4})(.*)$", base)
     if not m:
-        return None, None, None
-    cislo, rok, suffix = m.group(1), int(m.group(2)), m.group(3)
-    sbirka = "sm" if "m.s" in suffix else "sb"
-    return f"{rok}_{cislo}{suffix.rstrip('.')}", rok, sbirka
+        return None, None, None, None
+    prefix, cislo, rok, suffix = m.group(1), m.group(2), int(m.group(3)), m.group(4)
+    s = suffix.rstrip(".")
+    if s.startswith("Ú.l"):
+        sbirka = "ul1" if s.endswith("I") else "ul0"
+    elif "m.s" in s:
+        sbirka = "sm"
+    else:
+        sbirka = "sb"
+    return f"{rok}_{prefix}{cislo}{s}", rok, sbirka, f"{prefix}{cislo}"
 
 
 # =====================================================================
@@ -273,17 +307,20 @@ def file_sha256(fp):
 # Fáze A1: parse
 # =====================================================================
 
-def cmd_parse(data_dir: Path, store: Store):
+def cmd_parse(data_dir: Path, store: Store, overlap_pct: int = 0):
     files = sorted(data_dir.glob("*.docx"))
     if not files:
         log.error("Žádné DOCX v %s", data_dir)
         sys.exit(1)
 
+    overlap = CHUNK_CHARS * overlap_pct // 100
+    if overlap:
+        log.info("Chunking s překryvem: %d %% (~%d znaků)", overlap_pct, overlap)
     meta = store.load_download_meta(data_dir)
 
     stats = {"parsed": 0, "skipped": 0, "error": 0}
     for fp in files:
-        id_zakona, rok, sbirka = filename_to_meta(fp.name)
+        id_zakona, rok, sbirka, cislo = filename_to_meta(fp.name)
         if not id_zakona:
             log.warning("Přeskočen (nelze parsovat název): %s", fp.name)
             continue
@@ -295,16 +332,15 @@ def cmd_parse(data_dir: Path, store: Store):
             continue
 
         try:
-            units = extract_units(docx_to_texts(fp))
+            units = extract_units(docx_to_texts(fp), overlap=overlap)
         except Exception as e:
             log.error("Parse chyba %s: %s", fp.name, e)
             stats["error"] += 1
             continue
 
-        m = re.match(r"^(\d+)_(\d{4})(.*)$", fp.name[:-5])
-        key = f"/{sbirka}/{m.group(2)}/{m.group(1)}"
+        key = f"/{sbirka}/{rok}/{cislo}"
         citace, nazev = (meta[key][1], meta[key][2]) if key in meta \
-            else (f"{m.group(1)}/{m.group(2)} Sb."
+            else (f"{cislo}/{rok} Sb."
                   + (" m. s." if sbirka == "sm" else ""), "")
 
         store.save_parsed(id_zakona, fp, sha, citace, nazev, rok, sbirka, units)
@@ -404,7 +440,10 @@ def cmd_import(data_dir: Path, store: Store, es_url: str, index_name: str,
         log.error("Elasticsearch nedostupný na %s!", es_url)
         sys.exit(1)
     if not es.indices.exists(index=index_name):
-        es.indices.create(index=index_name, body=ES_MAPPING)
+        # ES klient 9.x už nepřijímá body= — mapping se předává po částech
+        es.indices.create(index=index_name,
+                          settings=ES_MAPPING["settings"],
+                          mappings=ES_MAPPING["mappings"])
         log.info("Index '%s' vytvořen", index_name)
 
     total = 0
@@ -473,6 +512,8 @@ def main():
 
     p_parse = sub.add_parser("parse", help="DOCX → paragrafy")
     add_common(p_parse)
+    p_parse.add_argument("--overlap", type=int, default=0, metavar="PCT",
+                         help="překryv chunků v %% délky chunku (10 = ~200 znaků)")
 
     p_embed = sub.add_parser("embed", help="paragrafy → vektory (lokálně)")
     add_common(p_embed)
@@ -498,7 +539,7 @@ def main():
     store = Store(db_path)
 
     if args.cmd == "parse":
-        cmd_parse(data_dir, store)
+        cmd_parse(data_dir, store, args.overlap)
     elif args.cmd == "embed":
         cmd_embed(data_dir, store, args.batch_paragrafs, args.fake_model)
     elif args.cmd == "import":

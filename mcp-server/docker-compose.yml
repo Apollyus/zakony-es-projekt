@@ -1,0 +1,120 @@
+services:
+  fast-mcp:
+    build: .
+    container_name: supeset-db-analitcs
+    env_file:
+      - .env
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+      mariadb-db:
+        condition: service_started
+      mssql-db:
+        condition: service_started
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    command: ["--sse"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    stdin_open: true 
+    tty: true
+    networks:
+      - mcp-network
+
+  postgres-db:
+    image: postgres:14-alpine
+    container_name: postgres-test-db
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - mcp-network
+
+  mariadb-db:
+    image: mariadb:10.8
+    container_name: mariadb-test-db
+    environment:
+      - MARIADB_ROOT_PASSWORD=${MARIADB_ROOT_PASSWORD}
+      - MARIADB_DATABASE=${MARIADB_DATABASE}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    networks:
+      - mcp-network
+
+  mssql-db:
+    image: mcr.microsoft.com/mssql/server:2019-latest
+    container_name: mssql-test-db
+    environment:
+      - ACCEPT_EULA=${ACCEPT_EULA}
+      - SA_PASSWORD=${MSSQL_SA_PASSWORD}
+    ports:
+      - "1433:1433"
+    volumes:
+      - mssql_data:/var/opt/mssql
+    networks:
+      - mcp-network
+
+  grafana:
+    image: grafana/grafana:10.4.0
+    container_name: grafana-dashboard
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+    depends_on:
+      - prometheus
+    networks:
+      - mcp-network
+
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: prometheus-metrics
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    depends_on:
+      - fast-mcp
+    networks:
+      - mcp-network
+
+  frontend:
+    build: ./frontend
+    container_name: superset-frontend
+    ports:
+      - "8081:80"
+    depends_on:
+      - fast-mcp
+    networks:
+      - mcp-network
+
+networks:
+  mcp-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  mariadb_data:
+  mssql_data:
+  grafana_data:
+  prometheus_data:

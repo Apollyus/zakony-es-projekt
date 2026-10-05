@@ -1,0 +1,13 @@
+fastmcp==2.13.1
+logging
+uvicorn
+fastapi
+sse-starlette
+elasticsearch>=8.0.0,<9
+sentence-transformers>=2.2.0
+python-dotenv
+prometheus_client
+httpx
+pytest
+pytest-asyncio
+pytest-mock

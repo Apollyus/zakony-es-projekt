@@ -37,3 +37,8 @@ node_modules/
 Thumbs.db
 zakony/
 zakony_json/
+
+# Logy a dočasné soubory
+*.log
+ses_*
+.omo/

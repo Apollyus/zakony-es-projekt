@@ -238,9 +238,13 @@ def sqlite_lookup(db_path: str, fragment_ids: List[int]) -> Dict[int, Tuple[str,
 
 def create_es_index(es: Elasticsearch, index_name: str, force: bool = False):
     """Vytvoří ES index s mappingem. Pokud existuje, přepíše se jen s --force."""
-    if es.indices.exists(index=index_name) and force:
-        log.info(f"Index '{index_name}' již existuje, smažu...")
-        es.indices.delete(index=index_name)
+    if es.indices.exists(index=index_name):
+        if force:
+            log.info(f"Index '{index_name}' již existuje, smažu...")
+            es.indices.delete(index=index_name)
+        else:
+            log.info(f"Index '{index_name}' již existuje, přeskočím vytvoření.")
+            return
     
     mapping = {
         "settings": {

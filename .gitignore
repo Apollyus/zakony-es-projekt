@@ -37,3 +37,16 @@ node_modules/
 Thumbs.db
 zakony/
 zakony_json/
+
+# Logy a dočasné soubory
+*.log
+ses_*
+.omo/
+
+# Obrovské datové dumpy (e-Sbírka)
+*.json.gz
+
+# Výsledky evaluace hledání
+eval/
+eval_results*.json
+.env

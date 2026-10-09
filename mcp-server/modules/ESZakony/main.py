@@ -9,7 +9,7 @@ depends_on = []
 
 es_client = None
 embedder = None
-INDEX_NAME = "zakony"
+INDEX_NAME = "zakony-esbirka-2026"
 
 def get_es_client():
     global es_client
@@ -52,7 +52,7 @@ def register(mcp, registry=None):
                                 "query": {
                                     "match": {"paragrafy.text": query}
                                 },
-                                "inner_hits": {"size": 3}
+                                "inner_hits": {"size": 10}
                             }
                         }
                     ]
@@ -101,18 +101,27 @@ def register(mcp, registry=None):
         vector = emb.encode(query).tolist()
         
         body = {
+            "knn": {
+                "field": "paragrafy.vektor",
+                "query_vector": vector,
+                "k": size,
+                "num_candidates": size * 10,
+                "inner_hits": {"name": "knn_hits", "size": 10}
+            },
             "query": {
-                "nested": {
-                    "path": "paragrafy",
-                    "query": {
-                        "knn": {
-                            "paragrafy.vektor": {
-                                "vector": vector,
-                                "k": size
+                "bool": {
+                    "should": [
+                        {"match": {"akt_nazev": query}},
+                        {
+                            "nested": {
+                                "path": "paragrafy",
+                                "query": {
+                                    "match": {"paragrafy.text": query}
+                                },
+                                "inner_hits": {"name": "text_hits", "size": 10}
                             }
                         }
-                    },
-                    "inner_hits": {"size": 3}
+                    ]
                 }
             },
             "size": size,
@@ -130,14 +139,20 @@ def register(mcp, registry=None):
                 "rok": law_info.get("rok"),
                 "relevant_paragraphs": []
             }
-            if "inner_hits" in hit and "paragrafy" in hit["inner_hits"]:
-                for p_hit in hit["inner_hits"]["paragrafy"]["hits"]["hits"]:
-                    p_source = p_hit["_source"]
-                    law_summary["relevant_paragraphs"].append({
-                        "citace": p_source.get("citace"),
-                        "text": p_source.get("text"),
-                        "score": p_hit["_score"]
-                    })
+            if "inner_hits" in hit:
+                added_citations = set()
+                for hit_type in ["knn_hits", "text_hits"]:
+                    if hit_type in hit["inner_hits"]:
+                        for p_hit in hit["inner_hits"][hit_type]["hits"]["hits"]:
+                            p_source = p_hit["_source"]
+                            citace = p_source.get("citace")
+                            if citace not in added_citations:
+                                added_citations.add(citace)
+                                law_summary["relevant_paragraphs"].append({
+                                    "citace": citace,
+                                    "text": p_source.get("text"),
+                                    "score": p_hit["_score"]
+                                })
             results.append(law_summary)
             
         return {"total_hits": res["hits"]["total"]["value"], "results": results}

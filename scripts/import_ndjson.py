@@ -32,7 +32,8 @@ def main():
     ap.add_argument("shards_dir", help="Adresář se shard_*.json.gz")
     ap.add_argument("--es-url", default="http://localhost:9200")
     ap.add_argument("--index", default="zakony")
-    ap.add_argument("--bulk-size", type=int, default=200, help="Dokumentů na bulk request")
+    ap.add_argument("--bulk-size", type=int, default=50, help="Dokumentů na bulk request")
+    ap.add_argument("--delay", type=float, default=0.5, help="Pauza mezi shardy (sekundy)")
     ap.add_argument("--force", action="store_true", help="Smaže a vytvoří index znovu")
     ap.add_argument("--reset", action="store_true", help="Importuje i už hotové shardy (.done)")
     args = ap.parse_args()
@@ -104,6 +105,9 @@ def main():
         rate = done_total / elapsed if elapsed > 0 else 0
         log.info(f"[{i}/{len(shards)}] {fname}: {success} OK, {n_err} err "
                  f"(celkem {done_total}, {rate:.0f} dok/s)")
+        
+        if args.delay > 0:
+            time.sleep(args.delay)
     
     # Ověření
     es.indices.refresh(index=args.index)

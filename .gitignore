@@ -49,3 +49,4 @@ ses_*
 # Výsledky evaluace hledání
 eval/
 eval_results*.json
+.env

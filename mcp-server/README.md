@@ -9,6 +9,20 @@ Server poskytuje LLM modelům následující nástroje (tools):
 - `search_laws_semantic`: Sémantické (vektorové) vyhledávání (k-NN) nad paragrafy pomocí modelu `sentence-transformers`.
 - `get_law_detail`: Získání detailů zákona a všech jeho paragrafů podle jeho ID.
 
+## Index v1 / v2
+Backend se volí proměnnou `ES_INDEX` (rozhraní nástrojů je v obou případech stejné):
+
+| `ES_INDEX` | schéma | vyhledávání | embedding |
+|---|---|---|---|
+| `zakony-esbirka-2026` (výchozí) | v1: zákon s nested fragmenty | BM25 / kNN + BM25 | `paraphrase-multilingual-mpnet-base-v2` |
+| `zakony-v2` | v2: jeden dokument = jeden § aktuálního znění | BM25 přes nadpis+cestu+text / hybrid RRF (BM25 + kNN) | `BAAI/bge-m3` |
+
+Ve v2 má každý paragraf ve výsledku `citace` jako „§ 140 Vražda“ a navíc `cesta` (část › hlava › díl);
+`get_law_detail` přijímá IRI (`esel-esb:eli/cz/sb/2009/40`) i citaci (`40/2009 Sb.`).
+Schéma lze vynutit `ES_INDEX_SCHEMA=v1|v2`. Podrobnosti: `../docs/INDEX_V2.md`.
+
+Testy (mockovaný ES): `.venv/bin/python -m pytest -q`
+
 ## Spuštění pro vývoj
 Server umí běžet buď lokálně nebo na vzdáleném ES (určeno přes proměnné prostředí).
 
@@ -21,7 +35,8 @@ pip install -r requirements.txt
 # 2. Nastavení proměnných prostředí (volitelné)
 # Můžete vytvořit soubor .env, např.:
 # ES_REMOTE_URL=http://your-remote-server:9200
-# EMBEDDING_MODEL=sentence-transformers/paraphrase-multilingual-mpnet-base-v2
+# ES_INDEX=zakony-v2            # nový index (výchozí je zakony-esbirka-2026)
+# EMBEDDING_MODEL=...           # výchozí podle schématu indexu
 
 # 3. Spuštění serveru
 python main.py

@@ -1,5 +1,7 @@
 # Elasticsearch - Technická Dokumentace
 
+> **Pozor:** popisuje původní indexy (v1). Nový index `zakony-v2` (jeden dokument = jeden §) je popsán v [`INDEX_V2.md`](INDEX_V2.md).
+
 ## INSTALACE
 - Verze: 8.15.0
 - Spuštění: Docker container

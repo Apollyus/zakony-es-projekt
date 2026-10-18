@@ -1,5 +1,17 @@
 # Zakony ES Projekt — TODO
 
+## 0. Index v2 (priorita, říjen 2026) — viz docs/INDEX_V2.md
+- [x] RAGAS evaluace (eval/), golden sady: ruční 15 otázek, syntetická 20
+- [x] Diagnóza v1: fragmenty bez §/nadpisu, všechna znění + zrušené předpisy, mpnet 128 tokenů, bug v deduplikaci MCP hybridu
+- [x] Pilot zakony-v2-pilot (447 předpisů): správný § v top 5 13 % → 93 %
+- [x] scripts/build_v2_index.py + scripts/run_v2_overnight.sh (obnovitelný noční build)
+- [x] MCP: přepínání v1/v2 přes ES_INDEX, oprava deduplikace v1, unit testy
+- [ ] **Noční build plného indexu zakony-v2** (390 tis. chunků)
+- [ ] Ranní srovnání v1 vs v2 na plném indexu (spustí se samo na konci buildu)
+- [ ] Přepnout MCP na ES_INDEX=zakony-v2 (+ ES alias pro budoucí rebuildy)
+- [ ] Ablace (jednotka § vs filtr znění vs model) a větší evaluační sada
+- [ ] Rozhodnout o smazání zakony-esbirka-2026 (24 GB) a zakony-v2-pilot
+
 ## Setup
 - [x] Docker + Elasticsearch 8.15.0 rozjeté na localhost:9200
 - [x] Index `zakony` s nested mappingem (paragrafy s vektory)
@@ -18,7 +30,7 @@
 - [x] Ingest běžel na datech (2665 dokumentů v index-zakony-jsony)
 
 ### Čeká na vyřešení
-- [ ] **BUG FIX:** Text paragrafů je prázdný (`<var>§ X.</var>`) — chybí skutečný text
+- [ ] **BUG FIX:** Text paragrafů je prázdný (`<var>§ X.</var>`) — chybí skutečný text *(ve v2 vyřešeno sloučením fragmentů pod §)*
   - Původní kód dělal jeden ES dokument na fragment, ne na paragraf
   - Řešení připraveno v pipeline.py (necommitnuté změny):
     - Nový typ `Odstavec_Dc` přidán do VALID_TYPES

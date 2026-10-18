@@ -6,7 +6,35 @@ Projekt byl v říjnu 2026 kompletně přepsán, aby dokázal lokálně zpracova
 
 ---
 
-## 🏗️ Celková architektura systému
+## ⭐ Aktuální stav (říjen 2026): přechod na index v2
+
+Evaluace (RAGAS + deterministické metriky, `eval/`) ukázala, že původní index `zakony-esbirka-2026`
+na realistických otázkách skoro nenachází správná ustanovení (správný § v top 5 u 13 % otázek).
+Příčiny: text rozsekaný na fragmenty bez § a nadpisu, všechna historická znění a zrušené předpisy
+v jednom indexu, slabý embedding model ořezávající na 128 tokenů a chyba v deduplikaci MCP hybridu.
+
+Nový **index v2 (`zakony-v2`)**: jeden dokument = jeden § aktuálního znění s nadpisem a cestou v předpisu,
+model `BAAI/bge-m3`, hybrid BM25 + kNN přes RRF. Na pilotu 93 % místo 13 %.
+
+| | Dokument |
+|---|---|
+| Návrh, důvody, schéma, build, přepnutí MCP | [`docs/INDEX_V2.md`](docs/INDEX_V2.md) |
+| Evaluace a metriky | [`eval/README.md`](eval/README.md) |
+
+**Noční build:**
+```bash
+bash scripts/run_v2_overnight.sh          # ~304 tis. chunků (bez mezinár. smluv), odhad 3–5 h
+tail -f logs/build_v2.log                 # průběh
+.venv/bin/python scripts/build_v2_index.py stats
+```
+
+**MCP server nad v2:** `ES_INDEX=zakony-v2 python mcp-server/main.py` (rozhraní nástrojů se nemění).
+
+Níže je popis původní pipeline v1, která zůstává funkční, dokud se MCP nepřepne.
+
+---
+
+## 🏗️ Architektura v1 (původní index `zakony-esbirka-2026`)
 
 Celý proces (pipeline) je z důvodu bezpečnosti a rychlosti rozdělen do **3 nezávislých kroků**. Abychom zamezili ztrátě dat při pádu (nebo uspání) počítače, všechny mezivýpočty se ukládají do robustní lokální databáze `SQLite`.
 
@@ -71,6 +99,29 @@ Při vývoji jsme museli překonat masivní hardwarová specifika tvého ES Dock
 3. **Chyby při dynamickém mapování (ES 8.x)**
    - Nová Python knihovna `elasticsearch>=8.0.0` potichu ignorovala parametr `body` při zakládání indexu. Založila ho prázdný a dynamicky mu vektory přiřadila jako klasický `[float]`, na čemž pak celý index havaroval.
    - **Řešení:** Vyměněno za přímý parametr `mappings={...}`. ES nyní explicitně ví, že sloupec vektor je AI model s 768 dimenzemi.
+
+4. **Index běžel, ale vracel nesmysly (zjištěno evaluací, říjen 2026)**
+   - Na otázku „Jaký trest hrozí za vraždu?“ vracel vyhlášku o bažantnicích; správný § v top 5 jen u 13 % otázek.
+   - Příčiny: fragmenty bez § a nadpisu („§ 140“ i „Vražda“ jsou samostatné prázdné fragmenty), všechna historická znění
+     a zrušené předpisy v jednom indexu (vracel i neplatné právo – zkušební dobu 3 místo 4 měsíců), model ořezávající
+     na 128 tokenů, deduplikace v MCP hybridu podle prázdné citace.
+   - **Řešení:** index v2 – jeden dokument = jeden § aktuálního znění, bge-m3, RRF. Viz [`docs/INDEX_V2.md`](docs/INDEX_V2.md).
+
+5. **Server má jen 4,1 GB RAM (heap 2,15 GB)**
+   - Na kNN je potřeba mít kvantované vektory v page cache (~2 GB volné). v1 jich má ~5 GB → nevejde se ani sám,
+     v1 + v2 současně už vůbec ne. Disk (47 GB volných) problém není.
+   - **Řešení:** v2 je ~10× menší (~0,35 GB „horkých“ dat), vektory ani `search_text` se neukládají do `_source`,
+     mezinárodní smlouvy jsou volitelné. Po ověření v2 smazat v1.
+
+6. **Embedding padal na nedostatek paměti GPU (MPS OOM)**
+   - Dávky po 32 s nejdelšími chunky na konci fragmentovaly paměť.
+   - **Řešení:** fp16 (2,6× rychlejší, vektory shodné na cos ≥ 0,9997), dávky podle odhadu tokenů, při OOM půlení dávky
+     a nakonec CPU; stav v SQLite, takže se běh dá kdykoli obnovit.
+
+7. **Vektory v2 existovaly jen v ES**
+   - Ztráta indexu by znamenala hodiny embeddingu znovu.
+   - **Řešení:** každý vektor se nejdřív uloží lokálně do `data/v2/v2.db` (fp16, celkem ~0,6 GB), teprve pak jde do ES;
+     `build_v2_index.py push` index obnoví bez embeddingu (~30 min), `backup` dělá kopii DB. Výpadek VPN/ES už embedding nezastaví.
 
 ---
 

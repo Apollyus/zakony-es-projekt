@@ -115,8 +115,11 @@ Při vývoji jsme museli překonat masivní hardwarová specifika tvého ES Dock
 
 6. **Embedding padal na nedostatek paměti GPU (MPS OOM)**
    - Dávky po 32 s nejdelšími chunky na konci fragmentovaly paměť.
-   - **Řešení:** fp16 (2,6× rychlejší, vektory shodné na cos ≥ 0,9997), dávky podle odhadu tokenů, při OOM půlení dávky
-     a nakonec CPU; stav v SQLite, takže se běh dá kdykoli obnovit.
+   - První plný běh: po 14 min „OOM i pro 1 text“ a všechno přešlo na CPU. Příčina: MPS si pro **každý nový tvar dávky**
+     nechává cache a neuvolní ji – paměť driveru rostla ~6 GB/min, ačkoli model potřebuje 1,76 GB.
+   - **Řešení:** fp16 (2,6× rychlejší, vektory shodné na cos ≥ 0,9997), **pevné tvary dávek** (8 délkových košů s pevnou
+     velikostí dávky → paměť stabilní ~3 GB), **jen GPU**; při překročení limitu se proces restartuje a naváže
+     (stav v SQLite). Launcher po přerušení hlásí NEDOKONČENO, ne „hotovo“.
 
 7. **Vektory v2 existovaly jen v ES**
    - Ztráta indexu by znamenala hodiny embeddingu znovu.

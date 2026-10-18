@@ -109,7 +109,13 @@ Vlastnosti nočního běhu:
 - **obnovitelný** – stav je v SQLite (`units.embedded`), po pádu/Ctrl+C stačí skript spustit znovu,
 - **priority** – nejdřív platné zákony (0), nařízení (1), vyhlášky (2), ostatní platné (3), pak `neznamy` (4–5)
   a nakonec mezinárodní smlouvy `Sb. m. s.` (8). Index je použitelný už po dokončení priorit 0–3,
-- **paměť GPU** – dávky podle odhadu tokenů; při nedostatku paměti se dávka půlí, nakonec CPU,
+- **paměť GPU** – embedding běží **jen na GPU** (CPU se nepoužívá). MPS si pro každý nový tvar vstupu nechává
+  cache, kterou neuvolní; s proměnlivými dávkami rostla paměť driveru ~6 GB/min až do OOM (změřeno: 2,3 → 17,3 GB
+  za 2,5 min při 1,76 GB skutečně použité). Proto **pevné tvary**: délka zarovnaná na koš po 64 tokenech (64…512),
+  v každém koši pevná velikost dávky (8192 tokenů / délka), neúplná dávka doplněná kopiemi → jen 8 tvarů
+  (změřeno: 2,2 → 3,4 GB). Kdyby paměť driveru přesto překročila `--gpu-mem-limit` (výchozí 12 GB) nebo přišla OOM,
+  proces skončí s kódem 75 a launcher ho spustí znovu – zase na GPU, naváže od posledního uloženého chunku,
+- **poctivý stav** – po Ctrl+C nebo vypršení limitu launcher vypíše NEDOKONČENO, udělá push + zálohu a eval nespustí,
 - **výpadek ES/VPN** nezastaví embedding – vektory se ukládají lokálně, odeslání se zkouší každých 5 min,
   na konci se čeká na ES ještě aspoň 30 min, zbytek dorovná `push`,
 - bulk po 200 dokumentech, `refresh_interval=-1` během buildu,
@@ -158,7 +164,8 @@ Co se při evaluaci a stavbě v2 pokazilo a jak se to vyřešilo – ať je vid�
 | Ruční gold byl zastaralý | Zkušební doba „3 měsíce“ z v1 – platné znění má 4 | Kotvy ověřovat proti aktuálnímu znění |
 | `znění-je-zrušen` nespolehlivé | 40/1964 Sb. má `false`, ačkoli skončil 2013; vyhlášené znění (`VYHLZNE`) nemá konec účinnosti | Status podle dat účinnosti KONSOL znění |
 | Přetisky „Úplné znění …“ | Staré zákoníky práce vytlačovaly platný | Vyřazeny z indexu |
-| MPS OOM při embeddingu | Pád po ~54 % i po 72 % pilotu | fp16, dávky podle tokenů, půlení při OOM, CPU fallback, obnovitelnost |
+| MPS OOM při embeddingu | Pád po ~54 % i po 72 % pilotu | fp16, obnovitelnost (první pokus: půlení dávky + CPU fallback) |
+| Plný build po 14 min „OOM i pro 1 text“, vše jelo na CPU | Únik paměti MPS: cache pro každý tvar dávky (2,3 → 17,3 GB za 2,5 min) | Pevné tvary (8), jen GPU, restart procesu při limitu paměti; launcher hlásí NEDOKONČENO místo „hotovo“ |
 | Reranker na MPS | 18/35 dotazů spadlo na paměť | Reranker na CPU (~9 s/dotaz), v produkci zatím ne |
 | `_source` s vektory | 75 % velikosti pilotu | Vektory i `search_text` mimo `_source` |
 | Málo RAM na ES serveru | v1 + v2 se nevejdou | Menší v2, smlouvy volitelné, v1 po ověření smazat |

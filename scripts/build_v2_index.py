@@ -4,7 +4,8 @@ Plný build indexu v2 (zakony-v2): § jednotky aktuálních znění všech před
 Fáze (každá je obnovitelná – po pádu/Ctrl+C stačí spustit znovu):
     extract  001/003/004 *.json.gz -> SQLite data/v2/v2.db   (~5 min, bez GPU)
     units    § jednotky do tabulky units                     (~10 min, bez GPU)
-    embed    bge-m3 (fp16 na MPS) → vektory do SQLite (záloha) → průběžně do ES   (hodiny – přes noc)
+    embed    bge-m3 (fp16, jen GPU) → vektory do SQLite (záloha) → průběžně do ES   (hodiny – přes noc)
+             kód 0 = hotovo, 3 = nedokončeno (Ctrl+C/limit), 75 = restart kvůli paměti GPU
     push     pošle lokální vektory do ES (doplnění po výpadku, obnova, nový server) – bez embeddingu
     backup   konzistentní kopie DB včetně vektorů (data/v2/backups/ nebo --out)
     stats    stav a odhad zbývajícího času
@@ -197,42 +198,92 @@ def stage_units():
 
 
 # ── embed ────────────────────────────────────────────────────────────────────
-class Embedder:
-    """bge-m3; fp16 na MPS. Při nedostatku paměti dávku půlí, nakonec spadne na CPU."""
+class GPURestart(Exception):
+    """Paměť GPU je zaplněná – proces skončí s kódem EXIT_RESTART a launcher ho spustí znovu (zase na GPU)."""
 
-    def __init__(self, device: str):
+
+EXIT_INCOMPLETE = 3   # zastaveno (Ctrl+C / časový limit), práce zbývá
+EXIT_RESTART = 75     # restart kvůli paměti GPU
+
+
+class Embedder:
+    """
+    bge-m3 ve fp16, výhradně na GPU (MPS/CUDA).
+
+    MPS si pro každý nový tvar vstupu (velikost dávky × délka) nechává v paměti cache a neuvolní ji –
+    s dávkami proměnlivé velikosti/délky paměť driveru rostla ~6 GB/min až do OOM. Proto pevné tvary:
+    délka se zarovná na koš po 64 tokenech (64…512) a každý koš má pevnou velikost dávky
+    (TOKEN_BUDGET // délka); neúplná dávka se doplní kopiemi. Celkem tedy jen 8 různých tvarů.
+    """
+
+    BUCKET = 64
+    MAX_LEN = 512
+    TOKEN_BUDGET = 8192
+
+    def __init__(self, device: str, mem_limit_gb: float):
         import torch
         from sentence_transformers import SentenceTransformer
+        if device == "cpu":
+            raise SystemExit("Embedding běží jen na GPU (mps/cuda).")
         self.torch = torch
         self.device = device
+        self.mem_limit = mem_limit_gb * 1e9
         self.model = SentenceTransformer(V2_EMBED_MODEL, device=device)
-        self.model.max_seq_length = 512
-        if device == "mps":
-            self.model.half()
-        self.cpu_model = None
+        self.model.max_seq_length = self.MAX_LEN
+        self.model.half()
+        self.tok = self.model[0].tokenizer
+        self._pad_to_buckets(self.model[0])
 
-    def _free(self):
+    def _pad_to_buckets(self, transformer):
+        """Tokenizace ST dorovná dávku na nejdelší text; my navíc na násobek BUCKET."""
+        orig, torch, tok, bucket = transformer.tokenize, self.torch, self.tok, self.BUCKET
+
+        def tokenize(texts, padding=True):
+            f = orig(texts, padding=padding)
+            length = f["input_ids"].shape[1]
+            target = min(self.MAX_LEN, -(-length // bucket) * bucket)
+            if target > length:
+                f["input_ids"] = torch.nn.functional.pad(f["input_ids"], (0, target - length), value=tok.pad_token_id)
+                f["attention_mask"] = torch.nn.functional.pad(f["attention_mask"], (0, target - length), value=0)
+            return f
+        transformer.tokenize = tokenize
+
+    def bucket_of(self, n_tokens: int) -> int:
+        return min(self.MAX_LEN, max(self.BUCKET, -(-n_tokens // self.BUCKET) * self.BUCKET))
+
+    def batch_size(self, bucket: int) -> int:
+        return max(1, self.TOKEN_BUDGET // bucket)
+
+    def plan(self, texts: list) -> list:
+        """Rozdělí texty na dávky pevného tvaru. Vrací [(bucket, [indexy])]; pořadí uvnitř koše zachováno."""
+        lengths = self.tok(texts, truncation=True, max_length=self.MAX_LEN)["input_ids"]
+        groups = {}
+        for i, ids in enumerate(lengths):
+            groups.setdefault(self.bucket_of(len(ids)), []).append(i)
+        out = []
+        for bucket in sorted(groups):
+            idx, size = groups[bucket], self.batch_size(bucket)
+            out += [(bucket, idx[j: j + size]) for j in range(0, len(idx), size)]
+        return out
+
+    def encode(self, texts: list, bucket: int):
+        size = self.batch_size(bucket)
+        padded = texts + [texts[-1]] * (size - len(texts))   # pevná velikost dávky
+        try:
+            v = self.model.encode(padded, batch_size=size, normalize_embeddings=True)
+        except RuntimeError as e:
+            if "out of memory" in str(e).lower():
+                raise GPURestart(f"OOM na GPU: {str(e)[:150]}") from e
+            raise
         if self.device == "mps":
             self.torch.mps.empty_cache()
+            used = self.torch.mps.driver_allocated_memory()
+            if used > self.mem_limit:
+                raise GPURestart(f"paměť GPU {used / 1e9:.1f} GB > limit {self.mem_limit / 1e9:.1f} GB")
+        return v[: len(texts)]
 
-    def encode(self, texts: list):
-        try:
-            v = self.model.encode(texts, batch_size=len(texts), normalize_embeddings=True)
-            self._free()
-            return v
-        except RuntimeError as e:
-            if "out of memory" not in str(e).lower():
-                raise
-            self._free()
-            if len(texts) > 1:
-                mid = len(texts) // 2
-                return np.vstack([self.encode(texts[:mid]), self.encode(texts[mid:])])
-            log.warning("OOM i pro 1 text (%d znaků) – embeduji na CPU", len(texts[0]))
-            if self.cpu_model is None:
-                from sentence_transformers import SentenceTransformer
-                self.cpu_model = SentenceTransformer(V2_EMBED_MODEL, device="cpu")
-                self.cpu_model.max_seq_length = 512
-            return self.cpu_model.encode(texts, normalize_embeddings=True)
+    def gpu_mem_gb(self) -> float:
+        return self.torch.mps.driver_allocated_memory() / 1e9 if self.device == "mps" else 0.0
 
 
 class ESPusher:
@@ -315,62 +366,59 @@ class ESPusher:
             log.warning("Nepodařilo se obnovit refresh_interval (ES nedostupný?): %s", str(e)[:200])
 
 
-def token_batches(rows: list, budget: int = 6000) -> list:
-    """Dávky podle odhadu tokenů (~3,5 znaku/token), aby dlouhé chunky nevyčerpaly paměť GPU."""
-    batches, cur, cur_max = [], [], 0
-    for r in rows:
-        tok = min(512, r[2] // 3 + 16)
-        if cur and max(cur_max, tok) * (len(cur) + 1) > budget:
-            batches.append(cur)
-            cur, cur_max = [], 0
-        cur.append(r)
-        cur_max = max(cur_max, tok)
-    if cur:
-        batches.append(cur)
-    return batches
-
-
-def stage_embed(max_priority: int, hours: float, device: str):
-    """Embedding lokálně do SQLite (záloha) + průběžné posílání do ES, když je dostupný."""
+def stage_embed(max_priority: int, hours: float, device: str, mem_limit_gb: float) -> int:
+    """
+    Embedding lokálně do SQLite (záloha) + průběžné posílání do ES, když je dostupný.
+    Návratový kód: 0 = vše hotovo, EXIT_INCOMPLETE = zastaveno/limit, EXIT_RESTART = restart kvůli paměti GPU.
+    """
     con = db()
     todo = con.execute("SELECT COUNT(*) FROM units WHERE embedded = 0 AND priority <= ?", (max_priority,)).fetchone()[0]
-    log.info("embed: %d chunků k embeddingu (priorita <= %d), zařízení %s, limit %.1f h", todo, max_priority, device, hours)
+    log.info("embed: %d chunků k embeddingu (priorita <= %d), zařízení %s, limit %.1f h, limit paměti GPU %.0f GB",
+             todo, max_priority, device, hours, mem_limit_gb)
     pusher = ESPusher(con, max_priority)
     deadline = time.time() + hours * 3600
-    t0, done, last_log = time.time(), 0, 0.0
+    t0, done, last_log, rc = time.time(), 0, 0.0, 0
     try:
-        emb = Embedder(device) if todo else None
+        emb = Embedder(device, mem_limit_gb) if todo else None
         while todo and not _stop and time.time() < deadline:
-            rows = con.execute("SELECT id, doc, len, priority FROM units WHERE embedded = 0 AND priority <= ? "
-                               "ORDER BY priority, len LIMIT 2000", (max_priority,)).fetchall()
+            rows = con.execute("SELECT id, doc, priority FROM units WHERE embedded = 0 AND priority <= ? "
+                               "ORDER BY priority, len LIMIT 4000", (max_priority,)).fetchall()
             if not rows:
                 break
-            for batch in token_batches(rows):
+            docs = [json.loads(r[1]) for r in rows]
+            texts = [d["search_text"] for d in docs]
+            for bucket, idx in emb.plan(texts):
                 if _stop or time.time() >= deadline:
                     break
-                docs = [json.loads(r[1]) for r in batch]
-                vecs = emb.encode([d["search_text"] for d in docs])
+                vecs = emb.encode([texts[i] for i in idx], bucket)
                 # nejdřív lokální záloha, teprve pak ES
                 con.executemany("INSERT OR REPLACE INTO vectors (id, v) VALUES (?, ?)",
-                                [(r[0], np.asarray(v, dtype=np.float16).tobytes()) for r, v in zip(batch, vecs)])
-                con.executemany("UPDATE units SET embedded = 1 WHERE id = ?", [(r[0],) for r in batch])
+                                [(rows[i][0], np.asarray(v, dtype=np.float16).tobytes()) for i, v in zip(idx, vecs)])
+                con.executemany("UPDATE units SET embedded = 1 WHERE id = ?", [(rows[i][0],) for i in idx])
                 con.commit()
-                done += len(batch)
+                done += len(idx)
                 pusher.push_some()
                 if time.time() - last_log > 60:
                     last_log = time.time()
                     rate = done / (time.time() - t0)
-                    log.info("embed: %d/%d (%.1f %%) | %.1f chunků/s | priorita %d | v ES +%d | zbývá ~%.1f h",
-                             done, todo, 100 * done / max(todo, 1), rate, batch[-1][3], pusher.pushed,
-                             (todo - done) / max(rate, 1e-6) / 3600)
-        # zbytek do ES (při výpadku čeká až do deadline, nejméně 30 min)
-        pusher.push_all(max(deadline, time.time() + PUSH_GRACE_S))
+                    log.info("embed: %d/%d (%.1f %%) | %.1f chunků/s | priorita %d | GPU %.1f GB | v ES +%d | zbývá ~%.1f h",
+                             done, todo, 100 * done / max(todo, 1), rate, rows[idx[-1]][2], emb.gpu_mem_gb(),
+                             pusher.pushed, (todo - done) / max(rate, 1e-6) / 3600)
+        left_embed = con.execute("SELECT COUNT(*) FROM units WHERE embedded = 0 AND priority <= ?",
+                                 (max_priority,)).fetchone()[0]
+        rc = EXIT_INCOMPLETE if left_embed else 0
+        # zbytek do ES (při výpadku čeká až do deadline, nejméně 30 min); po Ctrl+C jen krátce
+        pusher.push_all(max(deadline, time.time() + PUSH_GRACE_S) if not _stop else time.time() + 60)
+    except GPURestart as e:
+        log.warning("%s → ukončuji proces kvůli restartu na GPU (pokračuje se od posledního uloženého chunku)", e)
+        pusher.push_some(limit=100000)
+        rc = EXIT_RESTART
     finally:
         pusher.finish()
         left = con.execute("SELECT COUNT(*) FROM units WHERE embedded = 1 AND pushed = 0").fetchone()[0]
-        log.info("embed konec: +%d chunků za %.1f h, do ES posláno %d, čeká na poslání %d%s",
-                 done, (time.time() - t0) / 3600, pusher.pushed, left,
-                 " → spusť: build_v2_index.py push" if left else "")
+        log.info("embed konec: +%d chunků za %.1f h, do ES posláno %d, čeká na poslání %d, kód %d",
+                 done, (time.time() - t0) / 3600, pusher.pushed, left, rc)
+    return rc
 
 
 def stage_push(max_priority: int, hours: float, resend_all: bool, recreate: bool):
@@ -452,7 +500,9 @@ def main():
     ap.add_argument("--max-priority", type=int, default=5,
                     help="embedovat jen priority <= N (viz v2_common.priority); 8 = mezinárodní smlouvy")
     ap.add_argument("--hours", type=float, default=24.0, help="časový limit embeddingu")
-    ap.add_argument("--device", default="mps", choices=["mps", "cpu", "cuda"])
+    ap.add_argument("--device", default="mps", choices=["mps", "cuda"])
+    ap.add_argument("--gpu-mem-limit", type=float, default=float(os.getenv("GPU_MEM_LIMIT_GB", "12")),
+                    help="při překročení (GB paměti driveru MPS) se proces restartuje")
     ap.add_argument("--recreate", action="store_true", help="push: smazat index a naplnit ho znovu z lokálních vektorů")
     ap.add_argument("--all", action="store_true", help="push: poslat znovu všechno (např. na nový server)")
     ap.add_argument("--out", default="", help="backup: cílový soubor nebo adresář (výchozí data/v2/backups/)")
@@ -471,7 +521,7 @@ def main():
     elif args.stage == "units":
         stage_units()
     elif args.stage == "embed":
-        stage_embed(args.max_priority, args.hours, args.device)
+        sys.exit(stage_embed(args.max_priority, args.hours, args.device, args.gpu_mem_limit))
     elif args.stage == "push":
         stage_push(args.max_priority, args.hours, args.all, args.recreate)
     elif args.stage == "backup":

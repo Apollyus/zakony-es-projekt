@@ -243,3 +243,14 @@ def test_gpu_restart_exits_75_and_next_run_resumes(env):
 def test_time_limit_returns_incomplete(env):
     es, con = env
     assert B.stage_embed(max_priority=5, hours=0, device="mps", mem_limit_gb=12) == B.EXIT_INCOMPLETE
+
+
+def test_extract_with_other_date_refuses_to_drop_vectors(env):
+    es, con = env
+    B.stage_embed(max_priority=5, hours=1, device="mps", mem_limit_gb=12)
+    con.execute("INSERT OR REPLACE INTO meta VALUES ('extract_done', '2026-10-18')")
+    con.commit()
+    assert B.stored_date() == "2026-10-18"
+    with pytest.raises(SystemExit, match="--force"):
+        B.stage_extract("2026-10-19")                      # přechod přes půlnoc
+    assert counts(con)[0] == 20                             # nic se nesmazalo

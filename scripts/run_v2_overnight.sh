@@ -13,6 +13,8 @@ cd "$(dirname "$0")/.."
 
 HOURS="${HOURS:-10}"
 MAX_PRIORITY="${MAX_PRIORITY:-5}"
+# datum účinnosti znění: z DB (pokračování přes půlnoc nesmí přestavět DB), jinak dnešek
+DATE="${DATE:-$(.venv/bin/python scripts/build_v2_index.py date 2>/dev/null | tail -1)}"
 DATE="${DATE:-$(date +%F)}"
 MAX_RESTARTS="${MAX_RESTARTS:-100}"
 PY=.venv/bin/python

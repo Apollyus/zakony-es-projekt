@@ -96,13 +96,28 @@ def items(fn: str):
         yield from ijson.items(f, "položky.item")
 
 
+def stored_date():
+    """Datum, pro které je DB postavená (None = ještě nebyl extract)."""
+    if not DB_PATH.exists():
+        return None
+    row = db().execute("SELECT value FROM meta WHERE key = 'extract_done'").fetchone()
+    return row[0] if row else None
+
+
 # ── extract ──────────────────────────────────────────────────────────────────
-def stage_extract(today: str):
+def stage_extract(today: str, force: bool = False):
     con = db()
     done = dict(con.execute("SELECT key, value FROM meta").fetchall())
     if done.get("extract_done") == today:
         log.info("extract už hotový pro datum %s (smaž data/v2/v2.db pro nový běh)", today)
         return
+    embedded = con.execute("SELECT COUNT(*) FROM units WHERE embedded = 1").fetchone()[0]
+    if done.get("extract_done") and embedded and not force:
+        # jiné datum = jiná znění = nové § jednotky; staré vektory by se zahodily a v ES by zůstaly
+        # dokumenty starých znění. Bez --force to raději neděláme (např. přechod přes půlnoc).
+        raise SystemExit(f"DB je postavená pro datum {done['extract_done']} a má {embedded} embedovaných chunků; "
+                         f"extract pro {today} by je zahodil. Pokračuj se stejným datem (--date {done['extract_done']}), "
+                         f"nebo pro nové datum použij --force a nový index (V2_INDEX=…).")
     con.executescript("DELETE FROM laws; DELETE FROM frag; DELETE FROM text; DELETE FROM units;")
 
     log.info("001: čtu znění …")
@@ -495,8 +510,8 @@ def stage_stats():
 
 def main():
     ap = argparse.ArgumentParser(description="Plný build indexu v2 (zakony-v2)")
-    ap.add_argument("stage", choices=["extract", "units", "embed", "push", "backup", "stats"])
-    ap.add_argument("--date", default=date.today().isoformat(), help="datum účinnosti znění (extract)")
+    ap.add_argument("stage", choices=["extract", "units", "embed", "push", "backup", "stats", "date"])
+    ap.add_argument("--date", default=None, help="datum účinnosti znění (extract); výchozí = datum v DB, jinak dnešek")
     ap.add_argument("--max-priority", type=int, default=5,
                     help="embedovat jen priority <= N (viz v2_common.priority); 8 = mezinárodní smlouvy")
     ap.add_argument("--hours", type=float, default=24.0, help="časový limit embeddingu")
@@ -505,6 +520,7 @@ def main():
                     help="při překročení (GB paměti driveru MPS) se proces restartuje")
     ap.add_argument("--recreate", action="store_true", help="push: smazat index a naplnit ho znovu z lokálních vektorů")
     ap.add_argument("--all", action="store_true", help="push: poslat znovu všechno (např. na nový server)")
+    ap.add_argument("--force", action="store_true", help="extract: přestavět DB pro jiné datum i se zahozením vektorů")
     ap.add_argument("--out", default="", help="backup: cílový soubor nebo adresář (výchozí data/v2/backups/)")
     args = ap.parse_args()
 
@@ -517,7 +533,9 @@ def main():
     signal.signal(signal.SIGTERM, _on_signal)
 
     if args.stage == "extract":
-        stage_extract(args.date)
+        stage_extract(args.date or stored_date() or date.today().isoformat(), args.force)
+    elif args.stage == "date":
+        print(stored_date() or "")
     elif args.stage == "units":
         stage_units()
     elif args.stage == "embed":

@@ -127,7 +127,8 @@ Rychlost na M-series (24 GB): fp16 ~35 chunků/s na typickém chunku (fp32 ~13/s
 
 ## Výsledky na plném indexu (19. 10. 2026)
 
-Plný `zakony-v2`: 303 795 chunků (priority 0–5, bez mezinárodních smluv), embedding 4 h 25 min, 0 restartů.
+Plný `zakony-v2`: 303 795 chunků (priority 0–5, bez mezinárodních smluv), embedding 3,9 h (~21 chunků/s), 0 restartů.
+(Kvůli chybě s datem přes půlnoc se embedovalo všech 303 795 znovu, i těch 51 540 z večerního testu – opraveno.)
 Měřeno přes **skutečné nástroje MCP** (`eval/results/mcp-v2-knn-20261019`), top 5:
 
 | | ruční sada (15): správný § | správný předpis | syntetická (15 zodpověditelných): správný § |
@@ -190,6 +191,7 @@ Co se při evaluaci a stavbě v2 pokazilo a jak se to vyřešilo – ať je vid�
 | Reranker na MPS | 18/35 dotazů spadlo na paměť | Reranker na CPU (~9 s/dotaz), v produkci zatím ne |
 | `_source` s vektory | 75 % velikosti pilotu | Vektory i `search_text` mimo `_source` |
 | Málo RAM na ES serveru | v1 + v2 se nevejdou | Menší v2, smlouvy volitelné, v1 po ověření smazat |
+| Spuštění po půlnoci přestavělo celou DB | výchozí datum znění `$(date +%F)` se změnilo → extract smazal hotové chunky, embedovalo se znovu všech 303 795 (+~40 min) | launcher bere datum z DB; extract s jiným datem bez `--force` odmítne |
 | Žádná záloha vektorů v2 | ztráta indexu = hodiny embeddingu znovu | vektory lokálně v SQLite (fp16), fáze `push` a `backup` |
 | `push --recreate` po smazání indexu zvenku poslal 0 dokumentů | DB si myslela, že je vše odesláno (fake test to nezachytil, reálný test ano) | když index neexistuje, posílá se vše; varování při nesouladu počtů |
 

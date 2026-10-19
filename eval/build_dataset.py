@@ -1,5 +1,5 @@
 """
-Generování syntetické golden sady: náhodné textové fragmenty z ES -> LLM vytvoří
+Generování syntetické golden sady: náhodné odstavce z indexu v2 (platné předpisy) -> LLM vytvoří
 laickou otázku + referenční odpověď. Gold = (akt_citace, anchor z textu fragmentu).
 """
 
@@ -45,34 +45,29 @@ def make_anchor(text: str, length: int = 80) -> str:
 
 
 def sample_paragraphs(n: int, seed: int = 42) -> list:
-    """Náhodně vybere n fragmentů (150–1500 znaků) z různých chunků zákonů."""
+    """Náhodně vybere n odstavců (150–1500 znaků) z platných předpisů v indexu v2, max 1 na předpis."""
     es = Elasticsearch([config.ES_URL], request_timeout=120)
     rng = random.Random(seed)
     body = {
-        "size": n * 3,
-        "_source": ["akt_citace", "akt_nazev"],
+        "size": n * 5,
+        "_source": ["akt_citace", "akt_nazev", "text"],
         "query": {
             "function_score": {
-                "query": {
-                    "nested": {
-                        "path": "paragrafy",
-                        "query": {"match_all": {}},
-                        "inner_hits": {"size": 50, "_source": ["paragrafy.text"]},
-                    }
-                },
+                "query": {"bool": {"filter": [{"term": {"status": "platny"}}]}},
                 "random_score": {"seed": seed, "field": "_seq_no"},
                 "boost_mode": "replace",
             }
         },
     }
-    res = es.search(index=config.INDEX_NAME, body=body)
+    res = es.search(index=config.V2_INDEX, body=body)
     out, seen_laws = [], set()
     for hit in res["hits"]["hits"]:
         src = hit["_source"]
-        # max 1 fragment na zákon, ať je sada pestrá
+        # max 1 odstavec na předpis, ať je sada pestrá
         if src.get("akt_citace") in seen_laws:
             continue
-        frags = [clean(ih["_source"].get("text", "")) for ih in hit["inner_hits"]["paragrafy"]["hits"]["hits"]]
+        # chunk v2 = odstavce § oddělené \n; otázka se dělá z jednoho odstavce
+        frags = [clean(t) for t in (src.get("text") or "").split("\n")]
         frags = [t for t in frags if 150 <= len(t) <= 1500]
         if not frags:
             continue

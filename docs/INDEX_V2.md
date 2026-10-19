@@ -172,24 +172,25 @@ Poslanecké sněmovny?“ zůstává minutá (čl. 18 Ústavy se nenajde) – to
 
 | | hodnota |
 |---|---|
-| RAM | 4,1 GB celkem, heap 2,15 GB → ~2 GB page cache |
+| RAM | 4,1 GB celkem, heap 2,15 GB; po smazání v1 ~1,6 GB dostupné |
 | disk | 103 GB, volných ~47 GB |
-| v1 `zakony-esbirka-2026` | 24,2 GB disk, ~5 GB int8 vektorů (nevejde se do RAM) |
+| v1 `zakony-esbirka-2026` | **smazán 19. 10. 2026** (byl 24,2 GB disk, ~5 GB int8 vektorů – nevešel se do RAM) |
 | **v2 `zakony-v2`** (priority 0–5, 303 795 chunků, 22 301 předpisů) | **2,15 GB disk** (změřeno), ~0,35 GB „horkých“ dat (int8 vektory + HNSW graf) |
 | v2 se smlouvami (+87 tis. chunků, 2 263 smluv) | odhad ~2,8 GB disk, ~0,45 GB |
 
 ~7 KB na dokument (vektor ~5,2 KB = float32 + int8 + graf; `_source` bez vektoru a `search_text` skoro nic).
 Z 30 334 vybraných předpisů jich ~5,8 tis. nemá text mimo hlavičku dokumentu (např. `n68/1978 Sb.`) → v indexu nejsou.
-**Oba indexy současně se do RAM nevejdou** – v2 vedle v1 existovat může (nečinný index RAM nezabírá), ale v1 je
-potřeba smazat, jakmile se s ním přestane pracovat (a pilot `zakony-v2-pilot`, 0,3 GB). Volná RAM serveru: ~0,3 GB.
+v1 a v2 se do RAM společně nevešly, proto byly v1 i pilot `zakony-v2-pilot` 19. 10. 2026 smazány: na serveru je jen
+`zakony-v2`, cluster `green` (dřív `yellow` kvůli nepřiřazené replice v1), ~1,6 GB dostupné RAM, ~51 GB volného disku.
+Data v1 zůstávají v lokální `data/esbirka_checkpoint.db` (`scripts/push_to_es.py` je umí znovu nahrát).
 
 ## Přepnutí MCP serveru
 
 MCP server rozhoduje o schématu podle názvu indexu (`mcp-server/modules/ESZakony/main.py`):
 
 ```bash
-ES_INDEX=zakony-v2 python main.py      # v2: BM25 / čisté kNN, bge-m3 (run_mcp.sh to nastavuje sám)
-python main.py                          # v1 (výchozí, zakony-esbirka-2026)
+python main.py                          # v2 (výchozí, zakony-v2): BM25 / čisté kNN + filtr, bge-m3
+ES_INDEX=zakony-esbirka-2026 python main.py   # v1 – index je smazaný, jen pro případnou obnovu
 ```
 
 Rozhraní nástrojů je stejné (`search_laws_text`, `search_laws_semantic`, `get_law_detail`), výsledky jsou
@@ -212,7 +213,7 @@ Co se při evaluaci a stavbě v2 pokazilo a jak se to vyřešilo – ať je vid�
 | Plný build po 14 min „OOM i pro 1 text“, vše jelo na CPU | Únik paměti MPS: cache pro každý tvar dávky (2,3 → 17,3 GB za 2,5 min) | Pevné tvary (8), jen GPU, restart procesu při limitu paměti; launcher hlásí NEDOKONČENO místo „hotovo“ |
 | Reranker na MPS | 18/35 dotazů spadlo na paměť | Reranker na CPU (~9 s/dotaz), v produkci zatím ne |
 | `_source` s vektory | 75 % velikosti pilotu | Vektory i `search_text` mimo `_source` |
-| Málo RAM na ES serveru | v1 + v2 se nevejdou | Menší v2, smlouvy volitelné, v1 po ověření smazat |
+| Málo RAM na ES serveru | v1 + v2 se nevejdou, server swapoval | Menší v2, smlouvy volitelné; v1 a pilot smazány → 1,6 GB dostupné RAM |
 | Spuštění po půlnoci přestavělo celou DB | výchozí datum znění `$(date +%F)` se změnilo → extract smazal hotové chunky, embedovalo se znovu všech 303 795 (+~40 min) | launcher bere datum z DB; extract s jiným datem bez `--force` odmítne |
 | Staré předpisy vedené jako platné / bez statusu | 42/1970 Sb. vyhrával nad 262/2006 Sb. u dovolené | přeřazení v MCP: přetisky ven, `neznamy` a před 1945 ×0,94; 19 % → 4 % nejistých výsledků |
 | Regex na přetisky hledal `zne…` | české „znění“ má „ě“ – chytal jen slovenské „znení“ (odhalil unit test) | `zn[eě]\w*` |

@@ -18,7 +18,8 @@ load_dotenv(dotenv_path=os.path.join(os.path.dirname(os.path.dirname(__file__)),
 
 # ── Konstanty ────────────────────────────────────────────────────────────────
 ES_URL: str = os.getenv("ES_REMOTE_URL", "http://192.168.27.60:9200")
-INDEX_NAME: str = "zakony-esbirka-2026"
+INDEX_NAME: str = "zakony-esbirka-2026"   # v1 – na serveru smazán 19. 10. 2026 (retrievery v1-* a knn jsou historické)
+V2_INDEX: str = os.getenv("V2_INDEX", "zakony-v2")
 EMBED_MODEL: str = "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
 
 EVAL_LLM_BASE_URL: str = os.getenv("EVAL_LLM_BASE_URL", "")

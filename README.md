@@ -33,10 +33,11 @@ tail -f logs/build_v2.log                 # průběh
 ```
 
 **MCP server běží nad v2:** `mcp-server/run_mcp.sh` nastavuje `ES_INDEX=zakony-v2` (rozhraní nástrojů se nemění;
-zpět na v1: `ES_INDEX=zakony-esbirka-2026`).
+index v1 byl 19. 10. 2026 smazán).
 
-Níže je popis původní pipeline v1 (`zakony-esbirka-2026`). **MCP už ji nepoužívá**; index v1 na serveru zůstává
-jen do rozhodnutí o jeho smazání (24 GB, na RAM serveru se s v2 nevejde).
+Níže je popis původní pipeline v1 (`zakony-esbirka-2026`) – jen pro historii. **Index v1 byl 19. 10. 2026 smazán**
+(24 GB; s v2 se nevešel do RAM serveru). Jeho data včetně vektorů jsou pořád v lokální `data/esbirka_checkpoint.db`
+(111 GB) a `scripts/push_to_es.py` by ho uměl znovu nahrát (hodiny).
 
 ---
 
@@ -48,22 +49,40 @@ Vektor dotazu musí být ze **stejného modelu** jako index.
 
 ### Současný ES server (`192.168.27.60`)
 
-4,1 GB RAM (heap ES 2,15 GB, reálně využitý ~0,3 GB), 4 jádra, Ubuntu 20.04, ~47 GB volného disku. Už teď swapuje
-(~1,4 GB) – hlavně kvůli indexu v1 (24 GB, ~5 GB vektorů). **ES + MCP s modelem se sem nevejdou** ani po smazání v1
-(~4,05 GB potřeba na 4,1 GB, bez cache pro index).
+4,1 GB RAM (heap ES 2,15 GB, reálně využitý ~0,3 GB), 4 jádra, Ubuntu 20.04, ES v Dockeru (`docker run`, data
+v `/home/faltynek/.es-data`, SSH alias `dcuk-vps`). Po smazání v1 (19. 10. 2026): jen index `zakony-v2`, cluster `green`,
+~1,6 GB dostupné RAM, ~51 GB volného disku. **ES + MCP s modelem se sem nevejdou** (~4,05 GB potřeba na 4,1 GB
+i se sníženým heapem, bez cache pro index).
 
 ### Doporučení
 
 | varianta | RAM | CPU | volný disk | poznámka |
 |---|---|---|---|---|
 | **ES + MCP s modelem na jednom stroji** | **8 GB** | 4 jádra | ≥ 20 GB | ES heap 1–2 GB, MCP s bge-m3 ~2,2 GB, cache pro index ≥ 1 GB, systém ~0,5 GB; disk na index, druhý index při rebuildu, model a Docker obraz |
-| jen ES (jako teď, po smazání v1) | 4 GB | 2–4 jádra | ≥ 10 GB | heap snížit na 1–1,5 GB |
+| jen ES (jako teď) | 4 GB | 2–4 jádra | ≥ 10 GB | stačí i současný heap; snížení na 1–1,5 GB přidá cache (viz níže) |
 | jen MCP s modelem (samostatný stroj ve VPN) | ≥ 4 GB | 2–4 jádra | ~6 GB | model 2,3 GB + Python s torch (CPU) |
 | MCP bez modelu (embedding jako služba) | ~0,5 GB | 1 jádro | ~1 GB | jen pokud LLM proxy za VPN začne nabízet `/v1/embeddings` s bge-m3 |
 
 Změřeno (19. 10. 2026): MCP proces s bge-m3 na CPU **2,15 GB RAM**, ~43 ms na dotaz (CPU Macu, 4 vlákna; na serveru
 odhadem stovky ms), index `zakony-v2` **2,15 GB** disku a ~0,35 GB „horkých“ dat, heap ES využitý ~0,3 GB.
 Odhady: rezervy, disk pro Docker, rychlost na CPU serveru. Úspornou int8 verzi modelu se nepodařilo ověřit.
+
+### Snížení heapu ES (volitelné)
+
+Heap je nastavený proměnnou `ES_JAVA_OPTS` kontejneru (2 GB) – změna znamená **znovu vytvořit kontejner** se stejnými
+parametry. Po smazání v1 to není nutné (v2 potřebuje ~0,35 GB cache, dostupných je ~1,6 GB). Postup na serveru:
+
+```bash
+ssh dcuk-vps
+docker inspect elasticsearch      # opsat Env (ES_JAVA_OPTS, discovery.type, xpack.*…) a porty
+docker stop elasticsearch && docker rename elasticsearch elasticsearch-old
+docker run -d --name elasticsearch --restart unless-stopped -p 9200:9200 \
+  -v /home/faltynek/.es-data:/usr/share/elasticsearch/data \
+  -e <stejné proměnné jako dřív> -e ES_JAVA_OPTS="-Xms1g -Xmx1g" \
+  docker.elastic.co/elasticsearch/elasticsearch:8.15.0
+curl -s http://localhost:9200/_cat/indices        # zakony-v2 musí být zpět, 303 795 dokumentů
+docker rm elasticsearch-old                         # až po ověření
+```
 
 ### Hostovaný MCP
 
@@ -166,7 +185,7 @@ Při vývoji jsme museli překonat masivní hardwarová specifika tvého ES Dock
    - Na kNN je potřeba mít kvantované vektory v page cache (~2 GB volné). v1 jich má ~5 GB → nevejde se ani sám,
      v1 + v2 současně už vůbec ne. Disk (47 GB volných) problém není.
    - **Řešení:** v2 je ~10× menší (~0,35 GB „horkých“ dat), vektory ani `search_text` se neukládají do `_source`,
-     mezinárodní smlouvy jsou volitelné. Po ověření v2 smazat v1.
+     mezinárodní smlouvy jsou volitelné. Index v1 i pilot smazány 19. 10. 2026 → ~1,6 GB dostupné RAM, cluster `green`.
 
 6. **Embedding padal na nedostatek paměti GPU (MPS OOM)**
    - Dávky po 32 s nejdelšími chunky na konci fragmentovaly paměť.

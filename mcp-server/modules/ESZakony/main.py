@@ -11,9 +11,10 @@ depends_on = []
 es_client = None
 embedder = None
 
-# v1 = "zakony-esbirka-2026" (zákon s nested fragmenty), v2 = "zakony-v2" (jeden dokument = jeden §,
-# jen aktuální znění, bge-m3). Schéma se odvodí z názvu indexu, lze vynutit ES_INDEX_SCHEMA=v1|v2.
-INDEX_NAME = os.getenv("ES_INDEX", "zakony-esbirka-2026")
+# v2 = "zakony-v2" (výchozí; jeden dokument = jeden §, jen aktuální znění, bge-m3),
+# v1 = "zakony-esbirka-2026" (zákon s nested fragmenty; původní, na serveru smazán 19. 10. 2026).
+# Schéma se odvodí z názvu indexu, lze vynutit ES_INDEX_SCHEMA=v1|v2.
+INDEX_NAME = os.getenv("ES_INDEX", "zakony-v2")
 SCHEMA = os.getenv("ES_INDEX_SCHEMA") or ("v2" if INDEX_NAME.startswith("zakony-v2") else "v1")
 DEFAULT_MODEL = {"v1": "sentence-transformers/paraphrase-multilingual-mpnet-base-v2", "v2": "BAAI/bge-m3"}[SCHEMA]
 logger.info(f"ESZakony: index {INDEX_NAME}, schéma {SCHEMA}, model {os.getenv('EMBEDDING_MODEL', DEFAULT_MODEL)}")

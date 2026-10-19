@@ -14,8 +14,8 @@ Backend se volí proměnnou `ES_INDEX` (rozhraní nástrojů je v obou případe
 
 | `ES_INDEX` | schéma | vyhledávání | embedding |
 |---|---|---|---|
-| `zakony-esbirka-2026` (výchozí v kódu, když `ES_INDEX` chybí) | v1: zákon s nested fragmenty | BM25 / kNN + BM25 | `paraphrase-multilingual-mpnet-base-v2` |
-| `zakony-v2` (**aktuálně nastaveno v `run_mcp.sh`**) | v2: jeden dokument = jeden § aktuálního znění | BM25 přes nadpis+cestu+text / čisté kNN | `BAAI/bge-m3` |
+| `zakony-esbirka-2026` (index **smazán** 19. 10. 2026, jen pro obnovu) | v1: zákon s nested fragmenty | BM25 / kNN + BM25 | `paraphrase-multilingual-mpnet-base-v2` |
+| `zakony-v2` (**výchozí**) | v2: jeden dokument = jeden § aktuálního znění | BM25 přes nadpis+cestu+text / čisté kNN | `BAAI/bge-m3` |
 
 Ve v2 má každý paragraf ve výsledku `citace` jako „§ 140 Vražda“ a navíc `cesta` (část › hlava › díl);
 `get_law_detail` přijímá IRI (`esel-esb:eli/cz/sb/2009/40`) i citaci (`40/2009 Sb.`).
@@ -27,9 +27,8 @@ U každého předpisu ve výsledku je `status`.
 
 Testy (mockovaný ES, bez sítě a modelu): `.venv/bin/python -m pytest -q`
 
-> **Pozor:** výchozí index v kódu je pořád v1. Kdo spouští server jinak než přes `run_mcp.sh`
-> (např. `python main.py` nebo vlastní konfigurací klienta), musí nastavit `ES_INDEX=zakony-v2`,
-> jinak poběží nad starým indexem. Při startu se do logu vypíše `ESZakony: index …, schéma …`.
+Výchozí index je `zakony-v2` (v kódu i v `run_mcp.sh`); při startu se do logu vypíše `ESZakony: index …, schéma …`.
+`run_mcp.sh` navíc zapne `HF_HUB_OFFLINE=1`, pokud je model v cache – start pak nekontaktuje Hugging Face.
 
 ## Spuštění pro vývoj
 Server umí běžet buď lokálně nebo na vzdáleném ES (určeno přes proměnné prostředí).
@@ -43,7 +42,7 @@ pip install -r requirements.txt
 # 2. Nastavení proměnných prostředí (volitelné)
 # Můžete vytvořit soubor .env, např.:
 # ES_REMOTE_URL=http://your-remote-server:9200
-# ES_INDEX=zakony-v2            # nový index (run_mcp.sh ho nastavuje sám; bez něj se použije zakony-esbirka-2026)
+# ES_INDEX=zakony-v2            # výchozí, není třeba nastavovat
 # EMBEDDING_MODEL=...           # výchozí podle schématu indexu
 
 # 3. Spuštění serveru (run_mcp.sh nastaví ES_REMOTE_URL i ES_INDEX=zakony-v2)
@@ -65,7 +64,7 @@ Do konfigurace MCP klienta přidáte:
   }
 }
 ```
-nebo s explicitními proměnnými (bez `ES_INDEX` by server jel nad v1):
+nebo s explicitními proměnnými:
 ```json
 {
   "mcpServers": {

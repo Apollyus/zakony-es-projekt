@@ -149,7 +149,7 @@ import json  # noqa: E402
 from functools import lru_cache  # noqa: E402
 
 PILOT_DIR = Path(__file__).resolve().parent / "data" / "pilot"
-V2_INDEX = os.getenv("V2_INDEX", "zakony-v2-pilot")
+V2_INDEX = config.V2_INDEX            # výchozí plný index zakony-v2 (pilot zakony-v2-pilot smazán)
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 from v2_common import search_text_of  # noqa: E402
 V2_EMBED_MODEL = "BAAI/bge-m3"
@@ -198,7 +198,7 @@ def _v1_u(mode: str, query: str, k: int) -> list:
     return out[: k * 3]
 
 
-# ── v2: § jednotky (zakony-v2-pilot) ─────────────────────────────────────────
+# ── v2: § jednotky (zakony-v2) ─────────────────────────────────────────
 @lru_cache(maxsize=1)
 def _v2_embedder():
     from sentence_transformers import SentenceTransformer

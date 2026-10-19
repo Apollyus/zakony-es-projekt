@@ -13,7 +13,10 @@
 - [x] Filtr nejistých/zastaralých předpisů v MCP (přetisky ven, neznamy/před 1945 ×0,94): nejisté výsledky 19 % → 4 %
 - [ ] Slovenské předpisy z doby federace ve výsledcích (460/1992 apod.)
 - [ ] Ablace (jednotka § vs filtr znění vs model) a větší evaluační sada
-- [ ] Rozhodnout o smazání zakony-esbirka-2026 (24 GB) a zakony-v2-pilot
+- [x] Smazány zakony-esbirka-2026 (24 GB) a zakony-v2-pilot (19. 10. 2026) → cluster green, ~1,6 GB dostupné RAM
+- [x] MCP: výchozí index zakony-v2, HF_HUB_OFFLINE při startu
+- [ ] (volitelné) snížit heap ES na 1–1,5 GB – vyžaduje znovu vytvořit kontejner, postup v README
+- [ ] Úřední listy z let 1945–1950 („Ú. l.“) vedené jako platné – zvážit do filtru starých předpisů
 
 ## Setup
 - [x] Docker + Elasticsearch 8.15.0 rozjeté na localhost:9200

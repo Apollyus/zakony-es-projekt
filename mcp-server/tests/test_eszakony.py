@@ -37,6 +37,14 @@ def frag(citace, text, score=1.0):
     return {"_source": {"citace": citace, "text": text}, "_score": score}
 
 
+def test_default_index_is_v2(monkeypatch):
+    monkeypatch.delenv("ES_INDEX", raising=False)
+    monkeypatch.delenv("ES_INDEX_SCHEMA", raising=False)
+    import modules.ESZakony.main as m
+    m = importlib.reload(m)
+    assert m.INDEX_NAME == "zakony-v2" and m.SCHEMA == "v2" and m.DEFAULT_MODEL == "BAAI/bge-m3"
+
+
 def test_schema_detection(monkeypatch):
     m, _, _ = load(monkeypatch, "zakony-esbirka-2026")
     assert m.SCHEMA == "v1"

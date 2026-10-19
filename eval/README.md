@@ -45,8 +45,11 @@ Potřebuje VPN (ES i LLM). Závislosti navíc k `requirements.txt`:
 | `v2-rerank` | v2 | hybrid top 30 → `bge-reranker-v2-m3` (CPU, ~9 s/dotaz) |
 | `v2-knn-f1` … `v2-knn-f5`, `v2-knn-platny` | v2 | kNN top 50 přeřazené filtrem starých předpisů: f1 = jen vyřadit přetisky, f2/f3 = + `neznamy` ×0,97/×0,94, **f4 = + před 1945 ×0,94 (v MCP)**, f5 = ×0,90, `platny` = vyřadit `neznamy` |
 
-Index pro retrievery `v2-*` se volí proměnnou `V2_INDEX` – **výchozí je pilot `zakony-v2-pilot`**, pro plný index
-vždy `V2_INDEX=zakony-v2`.
+Index pro retrievery `v2-*` se volí proměnnou `V2_INDEX` (výchozí `zakony-v2`).
+
+> **Index v1 a pilot `zakony-v2-pilot` byly 19. 10. 2026 smazány.** Retrievery `knn` (v1) a `v1-*-u` a pilotní
+> skripty (`extract_pilot_sources.py`, `build_v2_pilot.py`) jsou proto historické – fungují jen po obnovení
+> indexů. `bm25` / `hybrid` volají MCP, který je teď výchozí nad v2. `build_dataset.py` vzorkuje z v2.
 
 ## Spuštění
 

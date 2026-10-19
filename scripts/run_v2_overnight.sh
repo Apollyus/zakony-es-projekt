@@ -53,12 +53,12 @@ $PY $B stats | tee logs/build_v2_stats.txt
 
 if [ "$RC" -ne 0 ] || [ "$STOPPED" -ne 0 ]; then
   echo "== $(date) | NEDOKONČENO (kód embed $RC, restartů $RESTARTS) – stav viz tabulka výše."
-  echo "   Index zakony-v2 je zatím neúplný, eval se nespouští. Pro pokračování spusť skript znovu."
+  echo "   Index ${V2_INDEX:-zakony-v2} je zatím neúplný, eval se nespouští. Pro pokračování spusť skript znovu."
   exit 3
 fi
 
 echo "== $(date) | embedding hotový (restartů $RESTARTS) → ranní srovnání v1 vs v2 (bez LLM)"
-V2_INDEX=zakony-v2 $PY eval/run_eval.py --no-ragas \
+V2_INDEX="${V2_INDEX:-zakony-v2}" $PY eval/run_eval.py --no-ragas \
   --retrievers bm25,hybrid,knn,v2-bm25,v2-knn,v2-hybrid \
   --out "eval/results/full-v1-vs-v2-$(date +%Y%m%d)" || echo "eval selhal (index je i tak hotový)"
-echo "== $(date) | HOTOVO – index zakony-v2 je kompletní"
+echo "== $(date) | HOTOVO – index ${V2_INDEX:-zakony-v2} je kompletní"

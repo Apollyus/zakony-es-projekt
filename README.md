@@ -1,8 +1,11 @@
 # Zákony ES Projekt (Architektura a Workflow 2026)
 
-Tento projekt slouží k sofistikovanému a extrémně rychlému prohledávání české legislativy pomocí **Elasticsearchu**. Využívá **hybridní vyhledávání** – kombinuje klasické textové vyhledávání s pokročilým sémantickým hledáním pomocí umělé inteligence (AI Vektory), která chápe význam textu.
+Tento projekt slouží k prohledávání české legislativy (e-Sbírka) pomocí **Elasticsearchu** a zpřístupňuje ho
+LLM modelům přes **MCP server**. Nabízí textové vyhledávání (BM25) a sémantické vyhledávání nad vektory
+(model `BAAI/bge-m3`), které chápe význam dotazu.
 
-Projekt byl v říjnu 2026 kompletně přepsán, aby dokázal lokálně zpracovat 30 670 zákonů (více než 7 milionů paragrafů) na Apple Silicon grafice a spolehlivě je zaindexovat i na menších serverech (s 1 GB RAM pro Javu v Dockeru).
+Aktuální index `zakony-v2` obsahuje **jen platná znění** 22 301 předpisů (303 795 § jednotek, 2,15 GB). Embedding běží
+lokálně na GPU Apple Silicon, ES server má 4,1 GB RAM (heap 2,15 GB) – viz [`docs/INDEX_V2.md`](docs/INDEX_V2.md).
 
 ---
 
@@ -32,7 +35,8 @@ tail -f logs/build_v2.log                 # průběh
 **MCP server běží nad v2:** `mcp-server/run_mcp.sh` nastavuje `ES_INDEX=zakony-v2` (rozhraní nástrojů se nemění;
 zpět na v1: `ES_INDEX=zakony-esbirka-2026`).
 
-Níže je popis původní pipeline v1, která zůstává funkční, dokud se MCP nepřepne.
+Níže je popis původní pipeline v1 (`zakony-esbirka-2026`). **MCP už ji nepoužívá**; index v1 na serveru zůstává
+jen do rozhodnutí o jeho smazání (24 GB, na RAM serveru se s v2 nevejde).
 
 ---
 
@@ -134,6 +138,22 @@ Při vývoji jsme museli překonat masivní hardwarová specifika tvého ES Dock
 
 Všechny zdrojové balíčky dat (`.json.gz`) nepatří do verzovacího systému a jsou ošetřeny v `.gitignore`.
 
+### Index v2 (aktuální)
+
+```bash
+bash scripts/run_v2_overnight.sh                        # build / pokračování buildu (obnovitelné)
+.venv/bin/python scripts/build_v2_index.py stats        # stav: chunky, embedding, v ES, zálohy
+.venv/bin/python scripts/build_v2_index.py push         # dorovnat do ES / obnovit smazaný index z lokálních vektorů
+.venv/bin/python scripts/build_v2_index.py push --recreate   # smazat a znovu naplnit index (bez embeddingu, ~30 min)
+.venv/bin/python scripts/build_v2_index.py backup --out /Volumes/Zaloha   # záloha DB včetně vektorů
+bash mcp-server/run_mcp.sh                              # MCP server nad zakony-v2
+```
+
+Nové datum znění (rebuild): `extract` s jiným datem bez `--force` odmítne zahodit hotové vektory – postup viz
+[`docs/INDEX_V2.md`](docs/INDEX_V2.md#další-kroky).
+
+### Index v1 (původní, MCP ho nepoužívá)
+
 **Založení nebo přehrání všech dat z nuly:**
 1. Aktivace prostředí: `source .venv/bin/activate`
 2. Vymazání indexu na ES (pokud chceš čistý štít):
@@ -146,6 +166,20 @@ Všechny zdrojové balíčky dat (`.json.gz`) nepatří do verzovacího systému
    ```
 
 **Průběžná práce na MCP serveru a UI:**
-Tento projekt je ideálně připraven pro tvůj nezávislý `mcp-dcuk` repozitář. Ve svém MCP asistentovi budeš využívat API Elasticsearchu a sestavovat složené dotazy (kombinující Full-text skóre názvu zákona se sémantickým `cosineSimilarity` skórem z vektorů u jednotlivých vnořených paragrafů).
+MCP server je v `mcp-server/` (moduly z `mcp-dcuk`, modul `ESZakony`); nástroje, přepínání v1/v2 a konfigurace
+klienta viz [`mcp-server/README.md`](mcp-server/README.md).
+
+## 🧪 Testy
+
+Testy běží bez sítě, GPU i modelu (mockovaný Elasticsearch a model):
+
+```bash
+.venv/bin/pip install pytest                                   # jednorázově (není v requirements.txt)
+.venv/bin/python -m pytest -q -p no:cacheprovider scripts/tests  # build v2: pevné tvary dávek, restart GPU, výpadek ES,
+                                                               # obnova indexu push, záloha, ochrana data znění
+cd mcp-server && .venv/bin/python -m pytest -q                 # MCP: v1/v2 schéma, deduplikace, kNN, filtr starých předpisů
+```
+
+Kvalita vyhledávání se neměří testy, ale evaluací nad skutečným ES (potřebuje VPN) – viz [`eval/README.md`](eval/README.md).
 
 *Dokumentace vygenerována systémem Antigravity 2.0*

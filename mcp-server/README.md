@@ -5,16 +5,16 @@ Je postaven na architektuře modulů (původně z `mcp-dcuk`), ze které byly od
 
 ## Funkce
 Server poskytuje LLM modelům následující nástroje (tools):
-- `search_laws_text`: Klasické BM25 textové vyhledávání nad paragrafy a názvy zákonů.
-- `search_laws_semantic`: Sémantické (vektorové) vyhledávání (k-NN) nad paragrafy pomocí modelu `sentence-transformers`.
-- `get_law_detail`: Získání detailů zákona a všech jeho paragrafů podle jeho ID.
+- `search_laws_text`: Klasické BM25 textové vyhledávání nad paragrafy (ve v2 nad nadpisem, cestou a textem §).
+- `search_laws_semantic`: Sémantické (vektorové) vyhledávání (kNN) nad paragrafy; ve v2 model `BAAI/bge-m3`.
+- `get_law_detail`: Získání detailů zákona a všech jeho paragrafů podle ID (ve v2 i podle citace, např. `40/2009 Sb.`).
 
 ## Index v1 / v2
 Backend se volí proměnnou `ES_INDEX` (rozhraní nástrojů je v obou případech stejné):
 
 | `ES_INDEX` | schéma | vyhledávání | embedding |
 |---|---|---|---|
-| `zakony-esbirka-2026` (výchozí) | v1: zákon s nested fragmenty | BM25 / kNN + BM25 | `paraphrase-multilingual-mpnet-base-v2` |
+| `zakony-esbirka-2026` (výchozí v kódu, když `ES_INDEX` chybí) | v1: zákon s nested fragmenty | BM25 / kNN + BM25 | `paraphrase-multilingual-mpnet-base-v2` |
 | `zakony-v2` (**aktuálně nastaveno v `run_mcp.sh`**) | v2: jeden dokument = jeden § aktuálního znění | BM25 přes nadpis+cestu+text / čisté kNN | `BAAI/bge-m3` |
 
 Ve v2 má každý paragraf ve výsledku `citace` jako „§ 140 Vražda“ a navíc `cesta` (část › hlava › díl);
@@ -25,7 +25,11 @@ Ve v2 se výsledky přeřazují: přetisky „úplné znění“ se vyřadí, p�
 znění, platnost neověřena) nebo z doby před 1945 mají skóre ×0,94 (`V2_STALE_PENALTY`, 1.0 = vypnuto).
 U každého předpisu ve výsledku je `status`.
 
-Testy (mockovaný ES): `.venv/bin/python -m pytest -q`
+Testy (mockovaný ES, bez sítě a modelu): `.venv/bin/python -m pytest -q`
+
+> **Pozor:** výchozí index v kódu je pořád v1. Kdo spouští server jinak než přes `run_mcp.sh`
+> (např. `python main.py` nebo vlastní konfigurací klienta), musí nastavit `ES_INDEX=zakony-v2`,
+> jinak poběží nad starým indexem. Při startu se do logu vypíše `ESZakony: index …, schéma …`.
 
 ## Spuštění pro vývoj
 Server umí běžet buď lokálně nebo na vzdáleném ES (určeno přes proměnné prostředí).
@@ -42,8 +46,10 @@ pip install -r requirements.txt
 # ES_INDEX=zakony-v2            # nový index (run_mcp.sh ho nastavuje sám; bez něj se použije zakony-esbirka-2026)
 # EMBEDDING_MODEL=...           # výchozí podle schématu indexu
 
-# 3. Spuštění serveru
-python main.py
+# 3. Spuštění serveru (run_mcp.sh nastaví ES_REMOTE_URL i ES_INDEX=zakony-v2)
+./run_mcp.sh
+# nebo ručně:
+ES_INDEX=zakony-v2 python main.py
 ```
 
 Server se spustí na portu 8000 a poskytne Swagger UI na http://localhost:8000/docs.
@@ -54,14 +60,26 @@ Do konfigurace MCP klienta přidáte:
 {
   "mcpServers": {
     "es-zakony": {
-      "command": "python",
+      "command": "/absolutni/cesta/k/mcp-server/run_mcp.sh"
+    }
+  }
+}
+```
+nebo s explicitními proměnnými (bez `ES_INDEX` by server jel nad v1):
+```json
+{
+  "mcpServers": {
+    "es-zakony": {
+      "command": "/absolutni/cesta/k/mcp-server/.venv/bin/python",
       "args": ["/absolutni/cesta/k/mcp-server/main.py"],
       "env": {
-        "ES_REMOTE_URL": "http://your-remote-server:9200"
+        "ES_REMOTE_URL": "http://192.168.27.60:9200",
+        "ES_INDEX": "zakony-v2"
       }
     }
   }
 }
 ```
+První dotaz trvá déle (~4 s), stahuje/načítá se model bge-m3 (~2,3 GB); další dotazy ~0,2 s.
 Při startu přes standardní MCP (např. Claude Desktop) sice FastMCP běží přes stdio (standardní chování FastMCP), 
 ale uvicorn (FastAPI) poběží na pozadí, což je užitečné pro debuggování a SSE konektivitu.

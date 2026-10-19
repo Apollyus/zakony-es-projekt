@@ -11,7 +11,7 @@ Nový návrh indexu, který nahrazuje `zakony-esbirka-2026` (v1). Vznikl na zák
 | V indexu jsou **všechna znění i zrušené předpisy** (zákoníky z 60. let, přetisky „Úplné znění …“) | Zastaralé právo vytlačuje platné; vrací se neplatný text (zkušební doba 3 měsíce místo dnešních 4) | Jen znění účinné k datu buildu; zrušené předpisy a přetisky se vynechají |
 | Embedding `paraphrase-multilingual-mpnet-base-v2` ořezává text na **128 tokenů** | Delší ustanovení nemají smysluplný vektor | `BAAI/bge-m3` (1024 dim, 512 tokenů na chunk) |
 | MCP `search_laws_semantic` deduplikoval podle `citace`, která je u fragmentů prázdná | Z každého zákona zbyl 1 text + nadpisy `§ N` | Opraveno (deduplikace podle citace i textu); ve v2 se neřeší |
-| BM25 boduje shodu tázacích slov s krátkými názvy předpisů („jaký“ ~ „jakým“) | Na otázku o vraždě vyhraje vyhláška o bažantnicích | BM25 přes nadpis^3, cestu^1,5, text, název jen ^0,5; hybrid přes RRF |
+| BM25 boduje shodu tázacích slov s krátkými názvy předpisů („jaký“ ~ „jakým“) | Na otázku o vraždě vyhraje vyhláška o bažantnicích | BM25 přes nadpis^3, cestu^1,5, text, název jen ^0,5; sémantické hledání čistým kNN (RRF hybrid se na plném indexu ukázal horší) |
 
 Kolik který bod přispěl, není změřeno zvlášť (ve v2 se změnilo vše najednou) – viz „Další kroky“.
 
@@ -175,12 +175,13 @@ Poslanecké sněmovny?“ zůstává minutá (čl. 18 Ústavy se nenajde) – to
 | RAM | 4,1 GB celkem, heap 2,15 GB → ~2 GB page cache |
 | disk | 103 GB, volných ~47 GB |
 | v1 `zakony-esbirka-2026` | 24,2 GB disk, ~5 GB int8 vektorů (nevejde se do RAM) |
-| v2 bez smluv (priority 0–5, ~304 tis. chunků) | odhad ~2–2,5 GB disk, ~0,35 GB „horkých“ dat (int8 vektory + HNSW graf) |
-| v2 se smlouvami (~390 tis.) | odhad ~3 GB disk, ~0,45 GB |
+| **v2 `zakony-v2`** (priority 0–5, 303 795 chunků, 22 301 předpisů) | **2,15 GB disk** (změřeno), ~0,35 GB „horkých“ dat (int8 vektory + HNSW graf) |
+| v2 se smlouvami (+87 tis. chunků, 2 263 smluv) | odhad ~2,8 GB disk, ~0,45 GB |
 
-Naměřeno na testovacím indexu: ~6,5 KB na dokument (vektor 5,2 KB = float32 + int8 + graf; `_source` bez vektoru
-a `search_text` skoro nic). **Oba indexy současně se do RAM nevejdou** – v2 se dá postavit vedle v1 (nečinný
-index RAM nezabírá), ale po ověření v2 je potřeba v1 smazat (a pilot `zakony-v2-pilot`, 0,3 GB).
+~7 KB na dokument (vektor ~5,2 KB = float32 + int8 + graf; `_source` bez vektoru a `search_text` skoro nic).
+Z 30 334 vybraných předpisů jich ~5,8 tis. nemá text mimo hlavičku dokumentu (např. `n68/1978 Sb.`) → v indexu nejsou.
+**Oba indexy současně se do RAM nevejdou** – v2 vedle v1 existovat může (nečinný index RAM nezabírá), ale v1 je
+potřeba smazat, jakmile se s ním přestane pracovat (a pilot `zakony-v2-pilot`, 0,3 GB). Volná RAM serveru: ~0,3 GB.
 
 ## Přepnutí MCP serveru
 
@@ -222,9 +223,12 @@ Co se při evaluaci a stavbě v2 pokazilo a jak se to vyřešilo – ať je vid�
 
 - Slovenské předpisy z doby federace (např. 460/1992 Sb. Ústava SR, „Ministerstvo zdravotníctva“) se občas
   pletou do výsledků – zvážit jazykovou detekci; větší eval sada pro jemnější ladění `V2_STALE_PENALTY`.
-
 - Ablace: zjistit, kolik dělá jednotka §, filtr znění a model (pilot s mpnet; pilot bez filtru).
 - Větší evaluační sada (ideálně otázky od uživatelů), oddělená od ladění.
 - Reranker (`bge-reranker-v2-m3`) zlepšil MRR jen málo a na CPU stojí ~9 s/dotaz → zatím jen v eval.
-- Pravidelný rebuild (nová znění) – stačí znovu spustit build s novým `--date` do nového indexu a přepnout alias.
+- Pravidelný rebuild (nová znění): DB je postavená pro jedno datum a `extract` s jiným datem bez `--force` odmítne
+  (zahodil by hotové vektory). Postup: zálohovat `data/v2/v2.db` (`backup`), pak
+  `DATE=2027-01-01 V2_INDEX=zakony-v2-20270101 bash scripts/run_v2_overnight.sh` s předchozím
+  `build_v2_index.py extract --date 2027-01-01 --force`, ověřit evalem a přepnout `ES_INDEX` v `run_mcp.sh`
+  (lépe ES alias – zatím není). Embeduje se vše znovu (~4 h); nezměněné § by šlo převzít podle `_id`, zatím neimplementováno.
 - Historická znění: samostatný index, pokud bude potřeba hledat „jak to bylo k datu X“.

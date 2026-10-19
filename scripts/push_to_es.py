@@ -9,7 +9,7 @@ from elasticsearch import Elasticsearch, helpers
 DB_PATH = "data/esbirka_checkpoint.db"
 ES_URL = "http://192.168.27.60:9200"
 INDEX_NAME = "zakony-esbirka-2026"
-THREADS = 2  # Sníženo ze 4, aby se nepřeplňovala 1GB paměť Elasticsearch serveru
+THREADS = 1  # 1 vlákno, aby se nepřeplňovala 1GB paměť Elasticsearch serveru při HNSW indexaci
 
 def upload_worker(q, es):
     while True:
@@ -19,18 +19,20 @@ def upload_worker(q, es):
         
         success = False
         retries = 0
-        # Omezeno na 3 pokusy, víc nemá smysl, pokud server nestíhá CPU
-        while not success and retries < 3:
+        last_err = None
+        while not success and retries < 5:
             try:
                 # Odesíláme data na server
-                helpers.bulk(es, actions, max_chunk_bytes=10 * 1024 * 1024)
+                helpers.bulk(es, actions, max_chunk_bytes=5 * 1024 * 1024)
                 success = True
+                time.sleep(0.1)  # Malá pauza pro uvolnění paměti v ES (Garbage Collection)
             except Exception as e:
                 retries += 1
+                last_err = e
                 time.sleep(5)
                 
         if not success:
-            print("\nVarování: Dokument se nepodařilo odeslat (server nestíhá).")
+            print(f"\nChyba: Dokument se nepodařilo odeslat ({last_err}). Zkontroluj, zda server běží!")
             
         q.task_done()
 
@@ -40,6 +42,9 @@ def create_es_index(es):
         es.indices.create(
             index=INDEX_NAME,
             mappings={
+                "_source": {
+                    "excludes": ["paragrafy.vektor"]
+                },
                 "properties": {
                     "akt_nazev": {"type": "text", "analyzer": "czech"},
                     "akt_citace": {"type": "keyword"},
@@ -65,20 +70,39 @@ def create_es_index(es):
 def push_only():
     es = Elasticsearch(
         [ES_URL],
-        request_timeout=300,  # Zvýšeno na 5 minut! Počítání HNSW grafů je extrémně pomalé.
+        request_timeout=300,
         max_retries=2,
         retry_on_timeout=True
     )
     
     create_es_index(es)
     
+    # Rychle zjistíme, co už v ES je, ať to nenahráváme znova
+    print("Zjišťuji, kolik zákonů už je v Elasticsearch nahraných...")
+    existing_laws = set()
+    try:
+        res = es.search(index=INDEX_NAME, size=0, body={
+            "aggs": {
+                "hotove_zakony": {
+                    "terms": {"field": "id_zakona", "size": 50000}
+                }
+            }
+        })
+        existing_laws = set(b["key"] for b in res.get("aggregations", {}).get("hotove_zakony", {}).get("buckets", []))
+        print(f"V Elasticsearch už je {len(existing_laws)} zákonů. Tyto přeskočíme!")
+    except Exception as e:
+        print("Nepodařilo se načíst stav z ES, pojedeme všechno:", str(e))
+    
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     
     print("Načítám seznam zákonů z databáze...")
     c.execute("SELECT iri, nazev, citace, rok FROM akty WHERE rok >= 1960")
-    laws = c.fetchall()
-    print(f"Celkem zákonů k odeslání: {len(laws)}")
+    all_laws = c.fetchall()
+    
+    # Vyfiltrujeme jen ty, co v ES ještě nejsou
+    laws = [law for law in all_laws if law[0] not in existing_laws]
+    print(f"Celkem zbývá zákonů k odeslání: {len(laws)}")
     
     # Menší fronta, aby se hlavní vlákno nezaseklo příliš daleko od pomalých workerů
     upload_queue = queue.Queue(maxsize=10)
@@ -108,8 +132,8 @@ def push_only():
                 "vektor": vektor
             })
             
-        # Zmenšeno na 50 paragrafů v jednom dokumentu, aby to nevyhodilo 1GB RAM
-        CHUNK_SIZE = 50
+        # Zmenšeno na 25 paragrafů v jednom dokumentu, aby to nevyhodilo 1GB RAM
+        CHUNK_SIZE = 25
         for chunk_idx in range(0, len(paragrafy_es), CHUNK_SIZE):
             chunk = paragrafy_es[chunk_idx : chunk_idx + CHUNK_SIZE]
             doc = {

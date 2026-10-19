@@ -1,5 +1,23 @@
 # Zakony ES Projekt — TODO
 
+## 0. Index v2 (priorita, říjen 2026) — viz docs/INDEX_V2.md
+- [x] RAGAS evaluace (eval/), golden sady: ruční 15 otázek, syntetická 20
+- [x] Diagnóza v1: fragmenty bez §/nadpisu, všechna znění + zrušené předpisy, mpnet 128 tokenů, bug v deduplikaci MCP hybridu
+- [x] Pilot zakony-v2-pilot (447 předpisů): správný § v top 5 13 % → 93 %
+- [x] scripts/build_v2_index.py + scripts/run_v2_overnight.sh (obnovitelný noční build)
+- [x] MCP: přepínání v1/v2 přes ES_INDEX, oprava deduplikace v1, unit testy
+- [x] Noční build plného indexu zakony-v2 (303 795 chunků, 3,9 h, 0 restartů; mezinárodní smlouvy zatím ne)
+- [x] Srovnání na plném indexu: ruční sada správný § 0 % (v1) → 80 % (v2 kNN), správný předpis 100 %
+- [x] MCP přepnut na zakony-v2 (run_mcp.sh), search_laws_semantic = čisté kNN
+- [ ] ES alias pro budoucí rebuildy
+- [x] Filtr nejistých/zastaralých předpisů v MCP (přetisky ven, neznamy/před 1945 ×0,94): nejisté výsledky 19 % → 4 %
+- [ ] Slovenské předpisy z doby federace ve výsledcích (460/1992 apod.)
+- [ ] Ablace (jednotka § vs filtr znění vs model) a větší evaluační sada
+- [x] Smazány zakony-esbirka-2026 (24 GB) a zakony-v2-pilot (19. 10. 2026) → cluster green, ~1,6 GB dostupné RAM
+- [x] MCP: výchozí index zakony-v2, HF_HUB_OFFLINE při startu
+- [ ] (volitelné) snížit heap ES na 1–1,5 GB – vyžaduje znovu vytvořit kontejner, postup v README
+- [ ] Úřední listy z let 1945–1950 („Ú. l.“) vedené jako platné – zvážit do filtru starých předpisů
+
 ## Setup
 - [x] Docker + Elasticsearch 8.15.0 rozjeté na localhost:9200
 - [x] Index `zakony` s nested mappingem (paragrafy s vektory)
@@ -18,7 +36,7 @@
 - [x] Ingest běžel na datech (2665 dokumentů v index-zakony-jsony)
 
 ### Čeká na vyřešení
-- [ ] **BUG FIX:** Text paragrafů je prázdný (`<var>§ X.</var>`) — chybí skutečný text
+- [ ] **BUG FIX:** Text paragrafů je prázdný (`<var>§ X.</var>`) — chybí skutečný text *(ve v2 vyřešeno sloučením fragmentů pod §)*
   - Původní kód dělal jeden ES dokument na fragment, ne na paragraf
   - Řešení připraveno v pipeline.py (necommitnuté změny):
     - Nový typ `Odstavec_Dc` přidán do VALID_TYPES

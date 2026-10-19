@@ -10,7 +10,8 @@
 - [x] Srovnání na plném indexu: ruční sada správný § 0 % (v1) → 80 % (v2 kNN), správný předpis 100 %
 - [x] MCP přepnut na zakony-v2 (run_mcp.sh), search_laws_semantic = čisté kNN
 - [ ] ES alias pro budoucí rebuildy
-- [ ] Šum ze starých předpisů se statusem platny/neznamy (42/1970, 123/1920, 460/1992)
+- [x] Filtr nejistých/zastaralých předpisů v MCP (přetisky ven, neznamy/před 1945 ×0,94): nejisté výsledky 19 % → 4 %
+- [ ] Slovenské předpisy z doby federace ve výsledcích (460/1992 apod.)
 - [ ] Ablace (jednotka § vs filtr znění vs model) a větší evaluační sada
 - [ ] Rozhodnout o smazání zakony-esbirka-2026 (24 GB) a zakony-v2-pilot
 

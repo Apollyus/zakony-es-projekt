@@ -79,7 +79,7 @@ def test_v2_semantic_groups_paragraphs_by_law(monkeypatch):
     # jediný dotaz: čisté kNN s filtrem na status, bez BM25 části
     bodies = [c.kwargs["body"] for c in es.search.call_args_list]
     assert len(bodies) == 1 and "knn" in bodies[0] and "query" not in bodies[0]
-    assert bodies[0]["knn"]["k"] == 5 and bodies[0]["knn"]["filter"]
+    assert bodies[0]["knn"]["k"] == 50 and bodies[0]["knn"]["filter"]          # pool kandidátů pro přeřazení
 
 
 @pytest.mark.parametrize("ident,field", [("40/2009 Sb.", "akt_citace"), ("esel-esb:eli/cz/sb/2009/40", "id_zakona")])
@@ -90,3 +90,24 @@ def test_v2_law_detail_by_citation_or_iri(monkeypatch, ident, field):
     assert res["akt_citace"] == "40/2009 Sb." and res["paragrafy"][0]["text"] == "t"
     body = es.search.call_args.kwargs["body"]
     assert field in body["query"]["term"] and body["sort"][0]["poradi"]["order"] == "asc"
+
+
+def test_v2_stale_laws_demoted_and_republications_dropped(monkeypatch):
+    _, es, tools = load(monkeypatch, "zakony-v2")
+
+    def hit(_id, citace, nazev, status, rok, score):
+        return {"_id": _id, "_score": score, "_source": {
+            "id_zakona": "x", "akt_citace": citace, "akt_nazev": nazev, "rok": rok, "status": status,
+            "oznaceni": "§ 1", "nadpis": "", "cesta": "", "text": "t"}}
+
+    es.search.return_value = {"hits": {"total": {"value": 4}, "hits": [
+        hit("a", "42/1970 Sb.", "Zákoník práce", "neznamy", 1970, 0.90),           # starý, jen vyhlášené znění
+        hit("b", "123/1920 Sb.", "Řád volení do poslanecké sněmovny", "platny", 1920, 0.89),
+        hit("c", "70/1983 Sb.", "Občanský zákoník (úplné znění, jak vyplývá …)", "neznamy", 1983, 0.95),
+        hit("d", "262/2006 Sb.", "Zákon zákoník práce", "platny", 2006, 0.87),
+    ]}}
+    res = tools["search_laws_semantic"]("dovolená", size=5)
+    order = [law["akt_citace"] for law in res["results"]]
+    assert order[0] == "262/2006 Sb."                          # platný předpis nahoře
+    assert "70/1983 Sb." not in order                          # přetisk vyřazen
+    assert res["results"][order.index("42/1970 Sb.")]["status"] == "neznamy"   # status je vidět

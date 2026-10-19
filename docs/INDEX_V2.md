@@ -143,9 +143,30 @@ Proto `search_laws_semantic` ve v2 používá čisté kNN (RRF hybrid byl horš�
 ~70× větším množstvím předpisů. Syntetické otázky jsou obecné („co přináší hospodářská spolupráce podle smlouvy“)
 a bez názvu předpisu jsou v 30 tis. předpisů často nejednoznačné.
 
-Zbývající šum: staré předpisy, které data vedou jako účinné nebo bez statusu – např. 42/1970 Sb. „Zákoník práce“
-(jen vyhlášené znění → `neznamy`) vyhrává u otázek na dovolenou, 123/1920 Sb. (volební řád, KONSOL znění nikdy
-neskončilo → `platny`), 460/1992 Sb. Ústava Slovenské republiky. Viz „Další kroky“.
+### Filtr nejistých / zastaralých předpisů
+
+Data e-Sbírky některé staré předpisy nevedou jako zrušené: 42/1970 Sb. „Zákoník práce“ má jen vyhlášené znění
+(→ `neznamy`) a u otázky na dovolenou vyhrával nad 262/2006 Sb. („dva týdny“ místo čtyř), 123/1920 Sb. (volební řád)
+je `platny`, protože konsolidace nikdy neskončila. V indexu: ~15 tis. předpisů `neznamy` (z toho ~8 tis. starých
+„jiné“/vyhlášek, ale i 617 nálezů ÚS a ~4,9 tis. sdělení po 1993 – ty jsou v pořádku), 85 „platných“ před 1945,
+slovenské přetisky „o úplnom znení“, které build nezachytil.
+
+MCP proto nad poolem 50 kandidátů **přetisky („úplné znění“ / „úplnom znení“) vyřadí a předpisům se statusem
+`neznamy` nebo z doby před 1945 vynásobí skóre 0,94** (`V2_STALE_PENALTY`); ve výsledku je u předpisu `status`.
+Nic se nevyřazuje plošně – úplné vyřazení `neznamy` u jedné otázky (mezinárodní smlouva) nevrátilo nic.
+
+Měřeno (`eval/results/filtr-stare-20261019`, 38 otázek vč. 3 kontrolních na staré, ale platné zákony
+99/1963, 586/1992, 2/1969):
+
+| | ruční: hit / MRR | kontrolní: hit / správný předpis | syntetické: hit | podíl nejistých kontextů |
+|---|---|---|---|---|
+| bez filtru | 0,80 / 0,73 | 0,33 / 0,67 | 0,47 | 19 % |
+| jen vyřadit přetisky | 0,80 / 0,73 | 0,67 / 1,00 | 0,47 | 18 % |
+| **přetisky ven + ×0,94** (zvoleno) | 0,80 / **0,80** | 0,67 / 1,00 | 0,47 | **4 %** |
+| vyřadit `neznamy` | 0,80 / 0,80 | 0,67 / 1,00 | 0,47 (1 otázka bez výsledku) | – |
+
+Varianty ×0,97 až ×0,90 vyšly na této malé sadě stejně; zvolena střední. Ruční otázka „Kdo má právo volit do
+Poslanecké sněmovny?“ zůstává minutá (čl. 18 Ústavy se nenajde) – to filtr neřeší.
 
 ## Zdroje serveru (192.168.27.60)
 
@@ -192,13 +213,15 @@ Co se při evaluaci a stavbě v2 pokazilo a jak se to vyřešilo – ať je vid�
 | `_source` s vektory | 75 % velikosti pilotu | Vektory i `search_text` mimo `_source` |
 | Málo RAM na ES serveru | v1 + v2 se nevejdou | Menší v2, smlouvy volitelné, v1 po ověření smazat |
 | Spuštění po půlnoci přestavělo celou DB | výchozí datum znění `$(date +%F)` se změnilo → extract smazal hotové chunky, embedovalo se znovu všech 303 795 (+~40 min) | launcher bere datum z DB; extract s jiným datem bez `--force` odmítne |
+| Staré předpisy vedené jako platné / bez statusu | 42/1970 Sb. vyhrával nad 262/2006 Sb. u dovolené | přeřazení v MCP: přetisky ven, `neznamy` a před 1945 ×0,94; 19 % → 4 % nejistých výsledků |
+| Regex na přetisky hledal `zne…` | české „znění“ má „ě“ – chytal jen slovenské „znení“ (odhalil unit test) | `zn[eě]\w*` |
 | Žádná záloha vektorů v2 | ztráta indexu = hodiny embeddingu znovu | vektory lokálně v SQLite (fp16), fáze `push` a `backup` |
 | `push --recreate` po smazání indexu zvenku poslal 0 dokumentů | DB si myslela, že je vše odesláno (fake test to nezachytil, reálný test ano) | když index neexistuje, posílá se vše; varování při nesouladu počtů |
 
 ## Další kroky
 
-- **Šum ze starých předpisů**: upřednostnit `status=platny` před `neznamy` (filtr nebo boost) a/nebo seznam
-  předpisů prokazatelně nahrazených (42/1970 → 262/2006, 123/1920, 460/1992 …); změřit na eval sadě.
+- Slovenské předpisy z doby federace (např. 460/1992 Sb. Ústava SR, „Ministerstvo zdravotníctva“) se občas
+  pletou do výsledků – zvážit jazykovou detekci; větší eval sada pro jemnější ladění `V2_STALE_PENALTY`.
 
 - Ablace: zjistit, kolik dělá jednotka §, filtr znění a model (pilot s mpnet; pilot bez filtru).
 - Větší evaluační sada (ideálně otázky od uživatelů), oddělená od ladění.

@@ -1,4 +1,5 @@
 import os
+import re
 import logging
 from elasticsearch import Elasticsearch
 from sentence_transformers import SentenceTransformer
@@ -138,6 +139,36 @@ def _v1_law_detail(id_zakona: str) -> dict:
 V2_SOURCE = ["id_zakona", "akt_citace", "akt_nazev", "rok", "oznaceni", "nadpis", "cesta", "text", "status"]
 V2_FILTER = [{"bool": {"must_not": [{"term": {"status": "zruseny"}}]}}]
 
+# Nejisté/zastaralé předpisy, které data e-Sbírky nevedou jako zrušené (např. 42/1970 Sb. „Zákoník práce“
+# má jen vyhlášené znění → status 'neznamy'; 123/1920 Sb. „platný“, protože konsolidace nikdy neskončila).
+# Nevyřazují se (status 'neznamy' mají i nálezy ÚS a sdělení), jen se jim sníží skóre; přetisky „úplné znění“
+# (i slovenské „úplnom znení“) se vyřadí. Změřeno na eval sadě: podíl nejistých výsledků 19 % → 4 %, správnost beze změny.
+STALE_PENALTY = float(os.getenv("V2_STALE_PENALTY", "0.94"))
+OLD_BEFORE_YEAR = 1945
+POOL = 50
+_REPUBLICATION_RE = re.compile(r"úpln\w*\s+zn[eě]\w*")
+
+
+def _stale_multiplier(source: dict) -> float:
+    if _REPUBLICATION_RE.search((source.get("akt_nazev") or "").lower()):
+        return 0.0
+    mult = 1.0
+    if source.get("status") == "neznamy":
+        mult *= STALE_PENALTY
+    if source.get("rok") and source["rok"] < OLD_BEFORE_YEAR:
+        mult *= STALE_PENALTY
+    return mult
+
+
+def _v2_rescore(hits: list) -> list:
+    """Sníží skóre nejistým předpisům, vyřadí přetisky a přeřadí (nad poolem kandidátů)."""
+    out = []
+    for hit in hits:
+        mult = _stale_multiplier(hit["_source"])
+        if mult > 0:
+            out.append(dict(hit, _score=hit["_score"] * mult))
+    return sorted(out, key=lambda h: h["_score"], reverse=True)
+
 
 def _v2_bm25_hits(query: str, n: int) -> list:
     body = {
@@ -173,6 +204,7 @@ def _v2_group(hits: list, size: int) -> dict:
             "akt_citace": s["akt_citace"],
             "akt_nazev": s.get("akt_nazev"),
             "rok": s.get("rok"),
+            "status": s.get("status"),          # platny | neznamy (jen vyhlášené znění, platnost neověřena)
             "relevant_paragraphs": [],
         })
         law["relevant_paragraphs"].append({
@@ -219,7 +251,7 @@ def register(mcp, registry=None):
             A dictionary containing search results.
         """
         if SCHEMA == "v2":
-            return _v2_group(_v2_bm25_hits(query, size), size)
+            return _v2_group(_v2_rescore(_v2_bm25_hits(query, max(POOL, size * 5))), size)
         return _v1_search_text(query, size)
 
     @mcp.tool()
@@ -237,7 +269,7 @@ def register(mcp, registry=None):
         if SCHEMA == "v2":
             # čisté kNN (bge-m3): na evaluaci lepší než hybrid BM25+kNN přes RRF
             # (plný index, ruční sada: správný § v top 5 u 80 % vs 67 %)
-            return _v2_group(_v2_knn_hits(query, size), size)
+            return _v2_group(_v2_rescore(_v2_knn_hits(query, max(POOL, size * 5))), size)
         return _v1_search_semantic(query, size)
 
     @mcp.tool()

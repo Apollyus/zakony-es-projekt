@@ -21,6 +21,10 @@ Ve v2 má každý paragraf ve výsledku `citace` jako „§ 140 Vražda“ a nav
 `get_law_detail` přijímá IRI (`esel-esb:eli/cz/sb/2009/40`) i citaci (`40/2009 Sb.`).
 Schéma lze vynutit `ES_INDEX_SCHEMA=v1|v2`. Podrobnosti: `../docs/INDEX_V2.md`.
 
+Ve v2 se výsledky přeřazují: přetisky „úplné znění“ se vyřadí, předpisy se statusem `neznamy` (jen vyhlášené
+znění, platnost neověřena) nebo z doby před 1945 mají skóre ×0,94 (`V2_STALE_PENALTY`, 1.0 = vypnuto).
+U každého předpisu ve výsledku je `status`.
+
 Testy (mockovaný ES): `.venv/bin/python -m pytest -q`
 
 ## Spuštění pro vývoj

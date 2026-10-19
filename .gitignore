@@ -47,6 +47,11 @@ ses_*
 *.json.gz
 
 # Výsledky evaluace hledání
-eval/
+# eval: kód, README a golden sady jsou v gitu; výsledky běhů a data pilotu (155 MB, dají se vyrobit znovu) ne
+eval/results/
+!eval/data/
+eval/data/pilot/
 eval_results*.json
 .env
+# výstupy buildu v2 (logs/build_v2.log, build_v2_stats.txt)
+logs/

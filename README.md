@@ -40,6 +40,55 @@ jen do rozhodnutí o jeho smazání (24 GB, na RAM serveru se s v2 nevejde).
 
 ---
 
+## 🖥️ Doporučená konfigurace serveru a hostovaný MCP
+
+**Kdo potřebuje embedding model:** ES ne – ukládá hotové vektory a dělá jen kNN. Model `BAAI/bge-m3` potřebuje
+ten, kdo převádí **dotaz** na vektor, tedy MCP server (lokálně tvůj Mac, u hostované varianty stroj, kde MCP běží).
+Vektor dotazu musí být ze **stejného modelu** jako index.
+
+### Současný ES server (`192.168.27.60`)
+
+4,1 GB RAM (heap ES 2,15 GB, reálně využitý ~0,3 GB), 4 jádra, Ubuntu 20.04, ~47 GB volného disku. Už teď swapuje
+(~1,4 GB) – hlavně kvůli indexu v1 (24 GB, ~5 GB vektorů). **ES + MCP s modelem se sem nevejdou** ani po smazání v1
+(~4,05 GB potřeba na 4,1 GB, bez cache pro index).
+
+### Doporučení
+
+| varianta | RAM | CPU | volný disk | poznámka |
+|---|---|---|---|---|
+| **ES + MCP s modelem na jednom stroji** | **8 GB** | 4 jádra | ≥ 20 GB | ES heap 1–2 GB, MCP s bge-m3 ~2,2 GB, cache pro index ≥ 1 GB, systém ~0,5 GB; disk na index, druhý index při rebuildu, model a Docker obraz |
+| jen ES (jako teď, po smazání v1) | 4 GB | 2–4 jádra | ≥ 10 GB | heap snížit na 1–1,5 GB |
+| jen MCP s modelem (samostatný stroj ve VPN) | ≥ 4 GB | 2–4 jádra | ~6 GB | model 2,3 GB + Python s torch (CPU) |
+| MCP bez modelu (embedding jako služba) | ~0,5 GB | 1 jádro | ~1 GB | jen pokud LLM proxy za VPN začne nabízet `/v1/embeddings` s bge-m3 |
+
+Změřeno (19. 10. 2026): MCP proces s bge-m3 na CPU **2,15 GB RAM**, ~43 ms na dotaz (CPU Macu, 4 vlákna; na serveru
+odhadem stovky ms), index `zakony-v2` **2,15 GB** disku a ~0,35 GB „horkých“ dat, heap ES využitý ~0,3 GB.
+Odhady: rezervy, disk pro Docker, rychlost na CPU serveru. Úspornou int8 verzi modelu se nepodařilo ověřit.
+
+### Hostovaný MCP
+
+Server umí kromě stdio (`run_mcp.sh`, tak ho teď spouští opencode) i HTTP – ověřeno lokálně:
+
+```bash
+cd mcp-server && ES_REMOTE_URL=http://192.168.27.60:9200 ES_INDEX=zakony-v2 .venv/bin/python main.py
+# poslouchá na 0.0.0.0:8000: MCP Streamable HTTP na /mcp/, SSE na /sse, Swagger na /docs
+```
+
+Klient (např. `opencode.jsonc`):
+
+```jsonc
+"es-zakony": { "type": "remote", "url": "http://<host>:8000/mcp/" }
+```
+
+Omezení a co dodělat před nasazením:
+- stroj musí být **ve VPN** (vidět ES) – veřejný hosting bez vystavení ES nejde,
+- **server nemá autentizaci** – kdo dosáhne na port 8000, může hledat; přidat token v hlavičce `Authorization`
+  (u veřejného přístupu navíc TLS přes reverse proxy),
+- `mcp-server/docker-compose.yml` obsahuje i Postgres, MariaDB, MSSQL, Grafanu a Prometheus z původního `mcp-dcuk` –
+  pro tenhle server osekat jen na `fast-mcp`; obraz stavět s torch pro CPU (jinak několik GB CUDA knihoven)
+  a model dát do svazku s cache, ať se 2,3 GB nestahují při každém startu,
+- první dotaz po startu trvá ~4–5 s (načtení modelu), další desetiny sekundy.
+
 ## 🏗️ Architektura v1 (původní index `zakony-esbirka-2026`)
 
 Celý proces (pipeline) je z důvodu bezpečnosti a rychlosti rozdělen do **3 nezávislých kroků**. Abychom zamezili ztrátě dat při pádu (nebo uspání) počítače, všechny mezivýpočty se ukládají do robustní lokální databáze `SQLite`.

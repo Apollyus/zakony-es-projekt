@@ -6,9 +6,11 @@
 - [x] Pilot zakony-v2-pilot (447 předpisů): správný § v top 5 13 % → 93 %
 - [x] scripts/build_v2_index.py + scripts/run_v2_overnight.sh (obnovitelný noční build)
 - [x] MCP: přepínání v1/v2 přes ES_INDEX, oprava deduplikace v1, unit testy
-- [ ] **Noční build plného indexu zakony-v2** (390 tis. chunků)
-- [ ] Ranní srovnání v1 vs v2 na plném indexu (spustí se samo na konci buildu)
-- [ ] Přepnout MCP na ES_INDEX=zakony-v2 (+ ES alias pro budoucí rebuildy)
+- [x] Noční build plného indexu zakony-v2 (303 795 chunků, 4 h 25 min, 0 restartů; mezinárodní smlouvy zatím ne)
+- [x] Srovnání na plném indexu: ruční sada správný § 0 % (v1) → 80 % (v2 kNN), správný předpis 100 %
+- [x] MCP přepnut na zakony-v2 (run_mcp.sh), search_laws_semantic = čisté kNN
+- [ ] ES alias pro budoucí rebuildy
+- [ ] Šum ze starých předpisů se statusem platny/neznamy (42/1970, 123/1920, 460/1992)
 - [ ] Ablace (jednotka § vs filtr znění vs model) a větší evaluační sada
 - [ ] Rozhodnout o smazání zakony-esbirka-2026 (24 GB) a zakony-v2-pilot
 

@@ -15,7 +15,7 @@ Backend se volí proměnnou `ES_INDEX` (rozhraní nástrojů je v obou případe
 | `ES_INDEX` | schéma | vyhledávání | embedding |
 |---|---|---|---|
 | `zakony-esbirka-2026` (výchozí) | v1: zákon s nested fragmenty | BM25 / kNN + BM25 | `paraphrase-multilingual-mpnet-base-v2` |
-| `zakony-v2` | v2: jeden dokument = jeden § aktuálního znění | BM25 přes nadpis+cestu+text / hybrid RRF (BM25 + kNN) | `BAAI/bge-m3` |
+| `zakony-v2` (**aktuálně nastaveno v `run_mcp.sh`**) | v2: jeden dokument = jeden § aktuálního znění | BM25 přes nadpis+cestu+text / čisté kNN | `BAAI/bge-m3` |
 
 Ve v2 má každý paragraf ve výsledku `citace` jako „§ 140 Vražda“ a navíc `cesta` (část › hlava › díl);
 `get_law_detail` přijímá IRI (`esel-esb:eli/cz/sb/2009/40`) i citaci (`40/2009 Sb.`).
@@ -35,7 +35,7 @@ pip install -r requirements.txt
 # 2. Nastavení proměnných prostředí (volitelné)
 # Můžete vytvořit soubor .env, např.:
 # ES_REMOTE_URL=http://your-remote-server:9200
-# ES_INDEX=zakony-v2            # nový index (výchozí je zakony-esbirka-2026)
+# ES_INDEX=zakony-v2            # nový index (run_mcp.sh ho nastavuje sám; bez něj se použije zakony-esbirka-2026)
 # EMBEDDING_MODEL=...           # výchozí podle schématu indexu
 
 # 3. Spuštění serveru

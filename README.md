@@ -14,7 +14,8 @@ Příčiny: text rozsekaný na fragmenty bez § a nadpisu, všechna historická 
 v jednom indexu, slabý embedding model ořezávající na 128 tokenů a chyba v deduplikaci MCP hybridu.
 
 Nový **index v2 (`zakony-v2`)**: jeden dokument = jeden § aktuálního znění s nadpisem a cestou v předpisu,
-model `BAAI/bge-m3`, hybrid BM25 + kNN přes RRF. Na pilotu 93 % místo 13 %.
+model `BAAI/bge-m3`, sémantické hledání čistým kNN. Plný index (303 795 chunků) je hotový: na realistických otázkách
+správný § v top 5 u 80 % (v1: 0 %), správný předpis u 100 %.
 
 | | Dokument |
 |---|---|
@@ -28,7 +29,8 @@ tail -f logs/build_v2.log                 # průběh
 .venv/bin/python scripts/build_v2_index.py stats
 ```
 
-**MCP server nad v2:** `ES_INDEX=zakony-v2 python mcp-server/main.py` (rozhraní nástrojů se nemění).
+**MCP server běží nad v2:** `mcp-server/run_mcp.sh` nastavuje `ES_INDEX=zakony-v2` (rozhraní nástrojů se nemění;
+zpět na v1: `ES_INDEX=zakony-esbirka-2026`).
 
 Níže je popis původní pipeline v1, která zůstává funkční, dokud se MCP nepřepne.
 
@@ -105,7 +107,7 @@ Při vývoji jsme museli překonat masivní hardwarová specifika tvého ES Dock
    - Příčiny: fragmenty bez § a nadpisu („§ 140“ i „Vražda“ jsou samostatné prázdné fragmenty), všechna historická znění
      a zrušené předpisy v jednom indexu (vracel i neplatné právo – zkušební dobu 3 místo 4 měsíců), model ořezávající
      na 128 tokenů, deduplikace v MCP hybridu podle prázdné citace.
-   - **Řešení:** index v2 – jeden dokument = jeden § aktuálního znění, bge-m3, RRF. Viz [`docs/INDEX_V2.md`](docs/INDEX_V2.md).
+   - **Řešení:** index v2 – jeden dokument = jeden § aktuálního znění, bge-m3, kNN. Viz [`docs/INDEX_V2.md`](docs/INDEX_V2.md).
 
 5. **Server má jen 4,1 GB RAM (heap 2,15 GB)**
    - Na kNN je potřeba mít kvantované vektory v page cache (~2 GB volné). v1 jich má ~5 GB → nevejde se ani sám,

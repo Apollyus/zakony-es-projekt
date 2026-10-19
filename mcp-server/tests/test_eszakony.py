@@ -66,14 +66,6 @@ def v2_hit(_id, citace, oznaceni, nadpis, text):
         "rok": 2009, "oznaceni": oznaceni, "nadpis": nadpis, "cesta": "ČÁST DRUHÁ", "text": text}}
 
 
-def test_rrf_prefers_docs_in_both_lists(monkeypatch):
-    m, _, _ = load(monkeypatch, "zakony-v2")
-    a, b, c = v2_hit("a", "x", "§ 1", "", ""), v2_hit("b", "x", "§ 2", "", ""), v2_hit("c", "x", "§ 3", "", "")
-    fused = m._rrf([a, b], [c, b])
-    assert fused[0]["_id"] == "b"
-    assert {h["_id"] for h in fused} == {"a", "b", "c"}
-
-
 def test_v2_semantic_groups_paragraphs_by_law(monkeypatch):
     _, es, tools = load(monkeypatch, "zakony-v2")
     hits = [v2_hit("1", "40/2009 Sb.", "§ 140", "Vražda", "(1) Kdo jiného úmyslně usmrtí"),
@@ -84,9 +76,10 @@ def test_v2_semantic_groups_paragraphs_by_law(monkeypatch):
     law = res["results"][0]
     assert law["akt_citace"] == "40/2009 Sb."
     assert [p["citace"] for p in law["relevant_paragraphs"]] == ["§ 140 Vražda", "§ 141 Zabití"]
-    # BM25 i kNN dotaz, oba s filtrem na status
+    # jediný dotaz: čisté kNN s filtrem na status, bez BM25 části
     bodies = [c.kwargs["body"] for c in es.search.call_args_list]
-    assert any("knn" in b for b in bodies) and any("query" in b for b in bodies)
+    assert len(bodies) == 1 and "knn" in bodies[0] and "query" not in bodies[0]
+    assert bodies[0]["knn"]["k"] == 5 and bodies[0]["knn"]["filter"]
 
 
 @pytest.mark.parametrize("ident,field", [("40/2009 Sb.", "akt_citace"), ("esel-esb:eli/cz/sb/2009/40", "id_zakona")])

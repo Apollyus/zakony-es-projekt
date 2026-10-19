@@ -125,6 +125,27 @@ Průběh: `tail -f logs/build_v2.log`, stav: `.venv/bin/python scripts/build_v2_
 
 Rychlost na M-series (24 GB): fp16 ~35 chunků/s na typickém chunku (fp32 ~13/s), dlouhé chunky pomaleji.
 
+## Výsledky na plném indexu (19. 10. 2026)
+
+Plný `zakony-v2`: 303 795 chunků (priority 0–5, bez mezinárodních smluv), embedding 4 h 25 min, 0 restartů.
+Měřeno přes **skutečné nástroje MCP** (`eval/results/mcp-v2-knn-20261019`), top 5:
+
+| | ruční sada (15): správný § | správný předpis | syntetická (15 zodpověditelných): správný § |
+|---|---|---|---|
+| v1 `search_laws_semantic` (hybrid) | 0 % | 0 % | 13 % |
+| v1 `search_laws_text` | 0 % | 0 % | 27 % |
+| v2 `search_laws_text` (BM25) | 53 % | 80 % | 7 % |
+| v2 RRF hybrid | 67 % | 93 % | 40 % |
+| **v2 `search_laws_semantic` (čisté kNN)** | **80 %** | **100 %** | **47 %** |
+
+Proto `search_laws_semantic` ve v2 používá čisté kNN (RRF hybrid byl horší). Oproti pilotu (93 %) je pokles daný
+~70× větším množstvím předpisů. Syntetické otázky jsou obecné („co přináší hospodářská spolupráce podle smlouvy“)
+a bez názvu předpisu jsou v 30 tis. předpisů často nejednoznačné.
+
+Zbývající šum: staré předpisy, které data vedou jako účinné nebo bez statusu – např. 42/1970 Sb. „Zákoník práce“
+(jen vyhlášené znění → `neznamy`) vyhrává u otázek na dovolenou, 123/1920 Sb. (volební řád, KONSOL znění nikdy
+neskončilo → `platny`), 460/1992 Sb. Ústava Slovenské republiky. Viz „Další kroky“.
+
 ## Zdroje serveru (192.168.27.60)
 
 | | hodnota |
@@ -144,7 +165,7 @@ index RAM nezabírá), ale po ověření v2 je potřeba v1 smazat (a pilot `zako
 MCP server rozhoduje o schématu podle názvu indexu (`mcp-server/modules/ESZakony/main.py`):
 
 ```bash
-ES_INDEX=zakony-v2 python main.py      # v2: BM25 / RRF hybrid, bge-m3
+ES_INDEX=zakony-v2 python main.py      # v2: BM25 / čisté kNN, bge-m3 (run_mcp.sh to nastavuje sám)
 python main.py                          # v1 (výchozí, zakony-esbirka-2026)
 ```
 
@@ -173,6 +194,9 @@ Co se při evaluaci a stavbě v2 pokazilo a jak se to vyřešilo – ať je vid�
 | `push --recreate` po smazání indexu zvenku poslal 0 dokumentů | DB si myslela, že je vše odesláno (fake test to nezachytil, reálný test ano) | když index neexistuje, posílá se vše; varování při nesouladu počtů |
 
 ## Další kroky
+
+- **Šum ze starých předpisů**: upřednostnit `status=platny` před `neznamy` (filtr nebo boost) a/nebo seznam
+  předpisů prokazatelně nahrazených (42/1970 → 262/2006, 123/1920, 460/1992 …); změřit na eval sadě.
 
 - Ablace: zjistit, kolik dělá jednotka §, filtr znění a model (pilot s mpnet; pilot bez filtru).
 - Větší evaluační sada (ideálně otázky od uživatelů), oddělená od ladění.

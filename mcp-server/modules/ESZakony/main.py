@@ -15,6 +15,7 @@ embedder = None
 INDEX_NAME = os.getenv("ES_INDEX", "zakony-esbirka-2026")
 SCHEMA = os.getenv("ES_INDEX_SCHEMA") or ("v2" if INDEX_NAME.startswith("zakony-v2") else "v1")
 DEFAULT_MODEL = {"v1": "sentence-transformers/paraphrase-multilingual-mpnet-base-v2", "v2": "BAAI/bge-m3"}[SCHEMA]
+logger.info(f"ESZakony: index {INDEX_NAME}, schéma {SCHEMA}, model {os.getenv('EMBEDDING_MODEL', DEFAULT_MODEL)}")
 
 
 def get_es_client():
@@ -136,7 +137,6 @@ def _v1_law_detail(id_zakona: str) -> dict:
 # ── v2: jeden dokument = jeden § aktuálního znění ────────────────────────────
 V2_SOURCE = ["id_zakona", "akt_citace", "akt_nazev", "rok", "oznaceni", "nadpis", "cesta", "text", "status"]
 V2_FILTER = [{"bool": {"must_not": [{"term": {"status": "zruseny"}}]}}]
-RRF_K = 60
 
 
 def _v2_bm25_hits(query: str, n: int) -> list:
@@ -161,16 +161,6 @@ def _v2_knn_hits(query: str, n: int) -> list:
                 "num_candidates": max(100, n * 4), "filter": V2_FILTER},
     }
     return get_es_client().search(index=INDEX_NAME, body=body)["hits"]["hits"]
-
-
-def _rrf(*hit_lists) -> list:
-    """Reciprocal Rank Fusion na straně klienta (nativní RRF retriever vyžaduje placenou licenci)."""
-    score, hits = {}, {}
-    for hit_list in hit_lists:
-        for rank, hit in enumerate(hit_list, 1):
-            score[hit["_id"]] = score.get(hit["_id"], 0.0) + 1.0 / (RRF_K + rank)
-            hits.setdefault(hit["_id"], hit)
-    return [dict(hits[i], _score=score[i]) for i in sorted(score, key=score.get, reverse=True)]
 
 
 def _v2_group(hits: list, size: int) -> dict:
@@ -245,9 +235,9 @@ def register(mcp, registry=None):
             A dictionary containing search results.
         """
         if SCHEMA == "v2":
-            # hybrid: BM25 + kNN spojené přes RRF
-            pool = max(50, size * 5)
-            return _v2_group(_rrf(_v2_bm25_hits(query, pool), _v2_knn_hits(query, pool)), size)
+            # čisté kNN (bge-m3): na evaluaci lepší než hybrid BM25+kNN přes RRF
+            # (plný index, ruční sada: správný § v top 5 u 80 % vs 67 %)
+            return _v2_group(_v2_knn_hits(query, size), size)
         return _v1_search_semantic(query, size)
 
     @mcp.tool()

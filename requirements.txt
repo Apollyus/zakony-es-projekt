@@ -10,3 +10,4 @@ numpy>=1.24.0
 chonkie>=1.4.2
 openai>=1.60.0
 requests>=2.31.0
+python-dotenv>=1.0.0      # .env (ES_REMOTE_URL, EVAL_LLM_*) – build v2 i eval

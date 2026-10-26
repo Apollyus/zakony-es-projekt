@@ -57,8 +57,9 @@ if [ "$RC" -ne 0 ] || [ "$STOPPED" -ne 0 ]; then
   exit 3
 fi
 
-echo "== $(date) | embedding hotový (restartů $RESTARTS) → ranní srovnání v1 vs v2 (bez LLM)"
-V2_INDEX="${V2_INDEX:-zakony-v2}" $PY eval/run_eval.py --no-ragas \
-  --retrievers bm25,hybrid,knn,v2-bm25,v2-knn,v2-hybrid \
-  --out "eval/results/full-v1-vs-v2-$(date +%Y%m%d)" || echo "eval selhal (index je i tak hotový)"
+echo "== $(date) | embedding hotový (restartů $RESTARTS) → ranní eval nad ${V2_INDEX:-zakony-v2} (bez LLM)"
+# bm25 / hybrid = skutečné nástroje MCP (search_laws_text / search_laws_semantic) nad stejným indexem
+ES_INDEX="${V2_INDEX:-zakony-v2}" V2_INDEX="${V2_INDEX:-zakony-v2}" $PY eval/run_eval.py --no-ragas \
+  --retrievers bm25,hybrid,v2-bm25,v2-knn,v2-knn-f4 \
+  --out "eval/results/full-v2-$(date +%Y%m%d)" || echo "eval selhal (index je i tak hotový)"
 echo "== $(date) | HOTOVO – index ${V2_INDEX:-zakony-v2} je kompletní"

@@ -23,7 +23,7 @@ logger.info(f"ESZakony: index {INDEX_NAME}, schéma {SCHEMA}, model {os.getenv('
 def get_es_client():
     global es_client
     if es_client is None:
-        es_url = os.getenv("ES_REMOTE_URL", "http://localhost:9200")
+        es_url = os.getenv("ES_REMOTE_URL", "http://192.168.27.60:9200")
         logger.info(f"Connecting to Elasticsearch at {es_url} (index {INDEX_NAME}, schema {SCHEMA})")
         es_client = Elasticsearch([es_url])
     return es_client

@@ -1,5 +1,7 @@
 # Index v2 (`zakony-v2`) – jeden dokument = jeden §
 
+> Provoz (nasazení, aktualizace, rollback): [`PROVOZ.md`](PROVOZ.md) · jak funguje kód: [`ARCHITEKTURA.md`](ARCHITEKTURA.md)
+
 Nový návrh indexu, který nahrazuje `zakony-esbirka-2026` (v1). Vznikl na základě RAGAS evaluace
 (`eval/`), která ukázala, že v1 v realistických dotazech skoro nenachází správná ustanovení.
 
@@ -182,7 +184,7 @@ Poslanecké sněmovny?“ zůstává minutá (čl. 18 Ústavy se nenajde) – to
 Z 30 334 vybraných předpisů jich ~5,8 tis. nemá text mimo hlavičku dokumentu (např. `n68/1978 Sb.`) → v indexu nejsou.
 v1 a v2 se do RAM společně nevešly, proto byly v1 i pilot `zakony-v2-pilot` 19. 10. 2026 smazány: na serveru je jen
 `zakony-v2`, cluster `green` (dřív `yellow` kvůli nepřiřazené replice v1), ~1,6 GB dostupné RAM, ~51 GB volného disku.
-Data v1 zůstávají v lokální `data/esbirka_checkpoint.db` (`scripts/push_to_es.py` je umí znovu nahrát).
+Lokální `data/esbirka_checkpoint.db` s daty v1 už na disku není (úklid disku do 26. 10.) – v1 obnovit nejde.
 
 ## Přepnutí MCP serveru
 

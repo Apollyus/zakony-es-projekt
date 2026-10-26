@@ -48,8 +48,8 @@ Potřebuje VPN (ES i LLM). Závislosti navíc k `requirements.txt`:
 Index pro retrievery `v2-*` se volí proměnnou `V2_INDEX` (výchozí `zakony-v2`).
 
 > **Index v1 a pilot `zakony-v2-pilot` byly 19. 10. 2026 smazány.** Retrievery `knn` (v1) a `v1-*-u` a pilotní
-> skripty (`extract_pilot_sources.py`, `build_v2_pilot.py`) jsou proto historické – fungují jen po obnovení
-> indexů. `bm25` / `hybrid` volají MCP, který je teď výchozí nad v2. `build_dataset.py` vzorkuje z v2.
+> skripty (`extract_pilot_sources.py`, `build_v2_pilot.py`) jsou proto historické – fungovaly by jen po znovuvytvoření
+> indexů (data v1 už lokálně nejsou). `bm25` / `hybrid` volají MCP, který je teď výchozí nad v2. `build_dataset.py` vzorkuje z v2.
 
 ## Spuštění
 

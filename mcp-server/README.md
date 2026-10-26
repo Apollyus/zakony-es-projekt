@@ -53,7 +53,7 @@ pip install -r requirements.txt
 
 # 2. Nastavení proměnných prostředí (volitelné)
 # Můžete vytvořit soubor .env, např.:
-# ES_REMOTE_URL=http://your-remote-server:9200
+# ES_REMOTE_URL=http://192.168.27.60:9200   # výchozí
 # ES_INDEX=zakony-v2            # výchozí, není třeba nastavovat
 # EMBEDDING_MODEL=...           # výchozí podle schématu indexu
 

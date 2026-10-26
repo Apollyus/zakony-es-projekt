@@ -24,7 +24,9 @@ správný § v top 5 u 80 % (v1: 0 %), správný předpis u 100 %.
 
 | | Dokument |
 |---|---|
-| Návrh, důvody, schéma, build, přepnutí MCP | [`docs/INDEX_V2.md`](docs/INDEX_V2.md) |
+| **Provoz:** nasazení, co je potřeba, aktualizace, kontrola, rollback, chyby | [`docs/PROVOZ.md`](docs/PROVOZ.md) |
+| **Jak funguje kód:** moduly, tok dat, tabulky DB, dokumenty v ES, MCP, eval | [`docs/ARCHITEKTURA.md`](docs/ARCHITEKTURA.md) |
+| Návrh, důvody, schéma, build, přepnutí MCP, výsledky | [`docs/INDEX_V2.md`](docs/INDEX_V2.md) |
 | Evaluace a metriky | [`eval/README.md`](eval/README.md) |
 
 **Noční build:**
@@ -34,12 +36,18 @@ tail -f logs/build_v2.log                 # průběh
 .venv/bin/python scripts/build_v2_index.py stats
 ```
 
+**Průběžná aktualizace na nová znění** (bez rebuildu; vektory nezměněných § se převezmou):
+```bash
+.venv/bin/python scripts/update_v2.py --download --dry-run   # jen plán změn
+.venv/bin/python scripts/update_v2.py --download             # stáhnout dumpy a aktualizovat na dnešek
+```
+
 **MCP server běží nad v2:** `mcp-server/run_mcp.sh` nastavuje `ES_INDEX=zakony-v2` (rozhraní nástrojů se nemění;
 index v1 byl 19. 10. 2026 smazán).
 
 Níže je popis původní pipeline v1 (`zakony-esbirka-2026`) – jen pro historii. **Index v1 byl 19. 10. 2026 smazán**
-(24 GB; s v2 se nevešel do RAM serveru). Jeho data včetně vektorů jsou pořád v lokální `data/esbirka_checkpoint.db`
-(111 GB) a `scripts/push_to_es.py` by ho uměl znovu nahrát (hodiny).
+(24 GB; s v2 se nevešel do RAM serveru). Lokální `data/esbirka_checkpoint.db` (111 GB, data a vektory v1) na disku
+už není (zmizel při úklidu disku do 26. 10. 2026) – **v1 obnovit nejde** jinak než celou starou pipeline od nuly.
 
 ---
 
@@ -222,6 +230,7 @@ bash scripts/run_v2_overnight.sh                        # build / pokračování
 .venv/bin/python scripts/build_v2_index.py push         # dorovnat do ES / obnovit smazaný index z lokálních vektorů
 .venv/bin/python scripts/build_v2_index.py push --recreate   # smazat a znovu naplnit index (bez embeddingu, ~30 min)
 .venv/bin/python scripts/build_v2_index.py backup --out /Volumes/Zaloha   # záloha DB včetně vektorů
+.venv/bin/python scripts/update_v2.py --download         # průběžná aktualizace na dnešní znění
 bash mcp-server/run_mcp.sh                              # MCP server nad zakony-v2
 ```
 
@@ -251,8 +260,9 @@ Testy běží bez sítě, GPU i modelu (mockovaný Elasticsearch a model):
 
 ```bash
 .venv/bin/pip install pytest                                   # jednorázově (není v requirements.txt)
-.venv/bin/python -m pytest -q -p no:cacheprovider scripts/tests  # build v2: pevné tvary dávek, restart GPU, výpadek ES,
-                                                               # obnova indexu push, záloha, ochrana data znění
+.venv/bin/python -m pytest -q -p no:cacheprovider scripts/tests  # build v2 (pevné tvary dávek, restart GPU, výpadek ES,
+                                                               # obnova push, záloha) + aktualizace (nový/změněný/zrušený
+                                                               # předpis, převzetí vektorů, výpadek ES, idempotence)
 cd mcp-server && .venv/bin/python -m pytest -q                 # MCP: v1/v2 schéma, deduplikace, kNN, filtr starých předpisů
 ```
 

@@ -249,3 +249,18 @@ def test_choose_versions_is_independent_of_dump_order():
            "typ_zneni": "KONSOL", "zmena": z} for d, z in ((2073307, "2026-07-02"), (2073325, "2026-07-08"), (6802, "2026-07-02"))]
     picks = {B.choose_versions({"x": order}, "2026-10-26")[0][0][3] for order in (vs, vs[::-1], vs[1:] + vs[:1])}
     assert picks == {2073325}                                        # nejnovější změna v datech
+
+
+def test_refuses_older_dumps_than_last_update(env):
+    """Po aktualizaci z novějších dumpů nesmí starší dumpy smazat předpisy vyhlášené mezitím."""
+    es, dumps = env
+    import os
+    os.utime(dumps / "001PravniAktZneni.json.gz", (2_000_000_000, 2_000_000_000))   # „čerstvé“ dumpy
+    assert U.run_update(D2, hours=0.01)[0] == 0
+    write_dumps(dumps, BEFORE)                                                     # zpět staré dumpy (bez C)
+    os.utime(dumps / "001PravniAktZneni.json.gz", (1_900_000_000, 1_900_000_000))
+    with pytest.raises(SystemExit, match="starší"):
+        U.run_update(D2, hours=0.01)
+    assert ("3/2026 Sb.", "§ 1", "2026-10-01", "Úplně nový předpis C.") in es_state(es)   # C zůstal v indexu
+    rc, summary = U.run_update(D2, hours=0.01, force=True)                         # záměr → povoleno
+    assert rc == 0 and "3/2026 Sb." in summary["removed"]

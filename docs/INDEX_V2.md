@@ -229,13 +229,14 @@ Kolik změn chodí (změřeno 26. 10. 2026):
 |---|---|
 | dumpy 5. 10. → 26. 10. | 19 nových, 10 změněných (~10 týdně) |
 | 1. 1. 2027 (účinnost novel) | 179 změněných, 27 odstraněných |
-| **první ostrý běh** | navíc 62 jednorázově – sjednocení výběru mezi znění se stejným datem účinnosti (viz deník) |
+| **první ostrý běh (26. 10. 2026)** | 19 nových + 72 změněných (z toho 62 jednorázově – sjednocení výběru verzí); 2 176 chunků, **1 859 vektorů převzato, 317 embedováno**, ~4 min; ES = DB (304 022), eval beze změny |
 
 ## Aktualizace na nová znění (rebuild)
 
 **Běžně stačí `update_v2.py` (výše).** Plný rebuild je potřeba jen při změně logiky § jednotek nebo mappingu.
 
-Současný index je z dumpů e-Sbírky z **5. 10. 2026** se zněními účinnými k **19. 10. 2026**. Dumpy se na
+Index byl postaven z dumpů z 5. 10. 2026 (znění k 19. 10.) a 26. 10. průběžně aktualizován (dumpy 26. 10.,
+znění k 26. 10.). Dumpy se na
 `opendata.eselpoint.gov.cz` aktualizují denně (001 ~170 MB, 002 ~5 MB, 003 ~1,2 GB, 004 ~0,5 GB). Nové datum
 s **původními** dumpy nedává smysl – novely publikované mezitím by chyběly.
 

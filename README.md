@@ -34,6 +34,12 @@ tail -f logs/build_v2.log                 # průběh
 .venv/bin/python scripts/build_v2_index.py stats
 ```
 
+**Průběžná aktualizace na nová znění** (bez rebuildu; vektory nezměněných § se převezmou):
+```bash
+.venv/bin/python scripts/update_v2.py --download --dry-run   # jen plán změn
+.venv/bin/python scripts/update_v2.py --download             # stáhnout dumpy a aktualizovat na dnešek
+```
+
 **MCP server běží nad v2:** `mcp-server/run_mcp.sh` nastavuje `ES_INDEX=zakony-v2` (rozhraní nástrojů se nemění;
 index v1 byl 19. 10. 2026 smazán).
 
@@ -222,6 +228,7 @@ bash scripts/run_v2_overnight.sh                        # build / pokračování
 .venv/bin/python scripts/build_v2_index.py push         # dorovnat do ES / obnovit smazaný index z lokálních vektorů
 .venv/bin/python scripts/build_v2_index.py push --recreate   # smazat a znovu naplnit index (bez embeddingu, ~30 min)
 .venv/bin/python scripts/build_v2_index.py backup --out /Volumes/Zaloha   # záloha DB včetně vektorů
+.venv/bin/python scripts/update_v2.py --download         # průběžná aktualizace na dnešní znění
 bash mcp-server/run_mcp.sh                              # MCP server nad zakony-v2
 ```
 
@@ -251,8 +258,9 @@ Testy běží bez sítě, GPU i modelu (mockovaný Elasticsearch a model):
 
 ```bash
 .venv/bin/pip install pytest                                   # jednorázově (není v requirements.txt)
-.venv/bin/python -m pytest -q -p no:cacheprovider scripts/tests  # build v2: pevné tvary dávek, restart GPU, výpadek ES,
-                                                               # obnova indexu push, záloha, ochrana data znění
+.venv/bin/python -m pytest -q -p no:cacheprovider scripts/tests  # build v2 (pevné tvary dávek, restart GPU, výpadek ES,
+                                                               # obnova push, záloha) + aktualizace (nový/změněný/zrušený
+                                                               # předpis, převzetí vektorů, výpadek ES, idempotence)
 cd mcp-server && .venv/bin/python -m pytest -q                 # MCP: v1/v2 schéma, deduplikace, kNN, filtr starých předpisů
 ```
 

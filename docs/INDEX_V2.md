@@ -197,7 +197,41 @@ Rozhraní nástrojů je stejné (`search_laws_text`, `search_laws_semantic`, `ge
 seskupené podle předpisu; `citace` je ve tvaru „§ 140 Vražda“ a přibylo pole `cesta`. `get_law_detail`
 ve v2 přijímá IRI i citaci („40/2009 Sb.“). Model bge-m3 (~2,3 GB) se stáhne při prvním dotazu.
 
+## Průběžná aktualizace (`scripts/update_v2.py`)
+
+Běžná cesta k novým zněním – bez rebuildu. Spouští se ručně (plánovač zatím není):
+
+```bash
+.venv/bin/python scripts/update_v2.py --download --dry-run   # stáhne novější dumpy a ukáže, co by se změnilo (DB ani ES nemění)
+.venv/bin/python scripts/update_v2.py --download             # stáhnout novější dumpy a aktualizovat na dnešek
+.venv/bin/python scripts/update_v2.py --date 2027-01-01      # k jinému datu (z lokálních dumpů)
+```
+
+Jak to funguje:
+1. `--download` stáhne dumpy, které jsou na serveru novější (podle `Last-Modified`; ~1,9 GB, ~1,5 min).
+2. Z 001 se pro každý předpis vybere znění k datu (stejná pravidla jako build) a porovná s DB:
+   **nový** předpis, **změněný** (nové znění; nový dokument téhož znění = oprava v datech; změna statusu/metadat),
+   **odstraněný** (zrušený). Protože se počítá k datu, chytí i novely přijaté dřív, které nabyly účinnosti teď.
+3. Z 003/004 se načtou fragmenty jen pro nové/změněné předpisy (~3 min) a postaví se § jednotky.
+4. **Vektory se převezmou podle obsahu** (sha1 `search_text`, tabulka `vec_by_hash`); embeduje se jen nový text
+   (GPU). U novely zůstává 99,4–99,6 % § beze změny (změřeno: zákoník práce 2 z 500, občanský zákoník 19 z 3 148).
+5. **ES bez výpadku:** nejdřív se pošle nové znění, teprve pak se smažou dokumenty předpisu mimo jeho aktuální
+   § jednotky. Při výpadku ES/VPN zůstane staré znění v indexu (`es_pending_delete`) a příští běh doposílá a dosmaže.
+
+Vlastnosti: opakovaný běh nic nezdvojí, zámek `data/v2/update.lock` brání dvěma během naráz, souhrn běhu je
+v `logs/update_v2_<datum>.json` a v tabulce `update_log`. Návratový kód: 0 hotovo, 3 nedokončeno (ES), 75 restart (GPU).
+
+Kolik změn chodí (změřeno 26. 10. 2026):
+
+| | předpisů |
+|---|---|
+| dumpy 5. 10. → 26. 10. | 19 nových, 10 změněných (~10 týdně) |
+| 1. 1. 2027 (účinnost novel) | 179 změněných, 27 odstraněných |
+| **první ostrý běh** | navíc 62 jednorázově – sjednocení výběru mezi znění se stejným datem účinnosti (viz deník) |
+
 ## Aktualizace na nová znění (rebuild)
+
+**Běžně stačí `update_v2.py` (výše).** Plný rebuild je potřeba jen při změně logiky § jednotek nebo mappingu.
 
 Současný index je z dumpů e-Sbírky z **5. 10. 2026** se zněními účinnými k **19. 10. 2026**. Dumpy se na
 `opendata.eselpoint.gov.cz` aktualizují denně (001 ~170 MB, 002 ~5 MB, 003 ~1,2 GB, 004 ~0,5 GB). Nové datum
@@ -242,6 +276,7 @@ Co se při evaluaci a stavbě v2 pokazilo a jak se to vyřešilo – ať je vid�
 | Žádná záloha vektorů v2 | ztráta indexu = hodiny embeddingu znovu | vektory lokálně v SQLite (fp16), fáze `push` a `backup` |
 | MCP visel při prvním dotazu (26. 10.) | úklid disku promazal cache HF – váhy bge-m3 0 B, `run_mcp.sh` přesto zapnul offline režim | offline jen při vahách > 1 GB (+ test); model znovu stažen |
 | Ranní eval launcheru volal smazaný v1 (`knn`) | po smazání v1 by retriever padal a výstup se jmenoval „v1 vs v2“ | eval jen nad v2 a nástroji MCP (`full-v2-*`) |
+| Výběr znění závisel na pořadí v dumpu | ~160 předpisů má víc znění se stejným datem účinnosti, pořadí se mezi dumpy mění → aktualizace by je přepočítávala pořád dokola (odhaleno dry-runem na čerstvých dumpech) | deterministický výběr: datum účinnosti, nejnovější změna v datech, číslo dokumentu (+ test) |
 | `push --recreate` po smazání indexu zvenku poslal 0 dokumentů | DB si myslela, že je vše odesláno (fake test to nezachytil, reálný test ano) | když index neexistuje, posílá se vše; varování při nesouladu počtů |
 
 ## Další kroky

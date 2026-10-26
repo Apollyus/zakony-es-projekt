@@ -53,6 +53,7 @@ load_dotenv(ROOT / ".env")
 ES_URL = os.getenv("ES_REMOTE_URL", "http://192.168.27.60:9200")
 INDEX = os.getenv("V2_INDEX", "zakony-v2")
 DB_PATH = ROOT / "data" / "v2" / "v2.db"
+DUMP_DIR = Path(os.getenv("V2_DUMP_DIR", str(ROOT)))   # kde leží 001–004 *.json.gz
 PUSH_GRACE_S = 1800   # po embeddingu čekat na ES (výpadek VPN) aspoň 30 min, než to vzdáme
 
 log = logging.getLogger("v2")
@@ -83,6 +84,10 @@ def db() -> sqlite3.Connection:
         -- lokální záloha vektorů (fp16, 1024 × 2 B); ES jde kdykoli znovu naplnit fází push
         CREATE TABLE IF NOT EXISTS vectors (id TEXT PRIMARY KEY, v BLOB);
     """)
+    law_cols = {r[1] for r in con.execute("PRAGMA table_info(laws)")}
+    if "zneni_zmena" not in law_cols:  # čas poslední změny znění v datech (opravy bez nové verze)
+        con.execute("ALTER TABLE laws ADD COLUMN zneni_zmena TEXT")
+        con.commit()
     cols = {r[1] for r in con.execute("PRAGMA table_info(units)")}
     if "pushed" not in cols:  # embedded = vektor uložený lokálně, pushed = dokument je v ES
         con.execute("ALTER TABLE units ADD COLUMN pushed INTEGER DEFAULT 0")
@@ -92,7 +97,7 @@ def db() -> sqlite3.Connection:
 
 
 def items(fn: str):
-    with gzip.open(ROOT / fn, "rb") as f:
+    with gzip.open(DUMP_DIR / fn, "rb") as f:
         yield from ijson.items(f, "položky.item")
 
 
@@ -105,29 +110,33 @@ def stored_date():
 
 
 # ── extract ──────────────────────────────────────────────────────────────────
-def stage_extract(today: str, force: bool = False):
-    con = db()
-    done = dict(con.execute("SELECT key, value FROM meta").fetchall())
-    if done.get("extract_done") == today:
-        log.info("extract už hotový pro datum %s (smaž data/v2/v2.db pro nový běh)", today)
-        return
-    embedded = con.execute("SELECT COUNT(*) FROM units WHERE embedded = 1").fetchone()[0]
-    if done.get("extract_done") and embedded and not force:
-        # jiné datum = jiná znění = nové § jednotky; staré vektory by se zahodily a v ES by zůstaly
-        # dokumenty starých znění. Bez --force to raději neděláme (např. přechod přes půlnoc).
-        raise SystemExit(f"DB je postavená pro datum {done['extract_done']} a má {embedded} embedovaných chunků; "
-                         f"extract pro {today} by je zahodil. Pokračuj se stejným datem (--date {done['extract_done']}), "
-                         f"nebo pro nové datum použij --force a nový index (V2_INDEX=…).")
-    con.executescript("DELETE FROM laws; DELETE FROM frag; DELETE FROM text; DELETE FROM units;")
+LAW_COLS = "akt_citace, nazev, status, doc_id, zneni_iri, ucinnost_od, typ, priority, zneni_zmena"
 
-    log.info("001: čtu znění …")
+
+def read_versions() -> dict:
+    """001 → {akt_citace: [znění …]}."""
     by_law = {}
     for it in items("001PravniAktZneni.json.gz"):
         by_law.setdefault(it.get("akt-citace"), []).append({
             "nazev": it.get("akt-název-vyhlášený"), "doc_id": it.get("znění-dokument-id"), "iri": it.get("iri"),
             "od": it.get("znění-datum-účinnosti-od"), "do": it.get("znění-datum-účinnosti-do"),
-            "typ_zneni": it.get("cis-esb-typ-znění-položka"),
+            "typ_zneni": it.get("cis-esb-typ-znění-položka"), "zmena": it.get("znění-datum-čas-poslední-změny"),
         })
+    return by_law
+
+
+def _version_key(v: dict):
+    """Pořadí znění: datum účinnosti, pak nejnovější změna v datech, pak číslo dokumentu.
+    Data mají u ~160 předpisů víc znění se stejným datem účinnosti a jejich pořadí se mezi dumpy mění –
+    bez tohoto klíče by výběr závisel na pořadí v souboru a aktualizace by předpisy zbytečně přepočítávala."""
+    return (v["od"] or "", v.get("zmena") or "", v["doc_id"] or 0)
+
+
+def choose_versions(by_law: dict, today: str):
+    """
+    Pro každý předpis znění k indexaci k datu `today` (viz docs/INDEX_V2.md, „Jak se určuje aktuální znění“).
+    Vrací (řádky tabulky laws v pořadí LAW_COLS, počty vynechaných).
+    """
     rows, skipped = [], {"zruseny": 0, "uplne_zneni": 0}
     for c, vs in by_law.items():
         kon = [v for v in vs if v["typ_zneni"] == "KONSOL"]
@@ -136,21 +145,19 @@ def stage_extract(today: str, force: bool = False):
             if not live:
                 skipped["zruseny"] += 1
                 continue
-            v, status = max(live, key=lambda v: v["od"]), "platny"
+            v, status = max(live, key=_version_key), "platny"
         else:
-            v, status = max(vs, key=lambda v: v["od"] or ""), "neznamy"
+            v, status = max(vs, key=_version_key), "neznamy"
         if is_republication(v["nazev"]):
             skipped["uplne_zneni"] += 1
             continue
         typ = law_type(clean(v["nazev"]))
-        rows.append((c, v["nazev"], status, v["doc_id"], v["iri"], v["od"], typ, priority(status, typ, c)))
-    con.executemany("INSERT INTO laws (akt_citace, nazev, status, doc_id, zneni_iri, ucinnost_od, typ, priority) "
-                    "VALUES (?,?,?,?,?,?,?,?)", rows)
-    con.commit()
-    log.info("001: %d předpisů k indexaci, vynecháno %s", len(rows), skipped)
+        rows.append((c, v["nazev"], status, v["doc_id"], v["iri"], v["od"], typ, priority(status, typ, c), v.get("zmena")))
+    return rows, skipped
 
-    want = {r[3] for r in rows}
-    log.info("003: čtu strom fragmentů (~2 min) …")
+
+def extract_fragments(con: sqlite3.Connection, want: set) -> set:
+    """003 → tabulka frag pro znění `want` (doc_id). Vrací potřebná fragment-id."""
     need, buf, n = set(), [], 0
     for it in items("003PravniAktZneniFragment.json.gz"):
         d = it.get("znění-dokument-id")
@@ -169,8 +176,11 @@ def stage_extract(today: str, force: bool = False):
     con.execute("CREATE INDEX IF NOT EXISTS idx_frag_doc ON frag(doc_id)")
     con.commit()
     log.info("003: %d fragmentů", n)
+    return need
 
-    log.info("004: čtu texty fragmentů (~1 min) …")
+
+def extract_texts(con: sqlite3.Connection, need: set) -> int:
+    """004 → tabulka text pro fragmenty `need`."""
     buf, n = [], 0
     for it in items("004PravniAktFragment.json.gz"):
         fid = it.get("fragment-id")
@@ -182,12 +192,51 @@ def stage_extract(today: str, force: bool = False):
                 buf = []
     con.executemany("INSERT OR REPLACE INTO text VALUES (?,?,?)", buf)
     n += len(buf)
+    con.commit()
+    log.info("004: %d textů", n)
+    return n
+
+
+def stage_extract(today: str, force: bool = False):
+    con = db()
+    done = dict(con.execute("SELECT key, value FROM meta").fetchall())
+    if done.get("extract_done") == today:
+        log.info("extract už hotový pro datum %s (smaž data/v2/v2.db pro nový běh)", today)
+        return
+    embedded = con.execute("SELECT COUNT(*) FROM units WHERE embedded = 1").fetchone()[0]
+    if done.get("extract_done") and embedded and not force:
+        # jiné datum = jiná znění = nové § jednotky; staré vektory by se zahodily a v ES by zůstaly
+        # dokumenty starých znění. Bez --force to raději neděláme (např. přechod přes půlnoc).
+        # Průběžnou aktualizaci na nové datum dělá scripts/update_v2.py.
+        raise SystemExit(f"DB je postavená pro datum {done['extract_done']} a má {embedded} embedovaných chunků; "
+                         f"extract pro {today} by je zahodil. Pokračuj se stejným datem (--date {done['extract_done']}), "
+                         f"aktualizuj přes scripts/update_v2.py, nebo pro nové datum použij --force a nový index.")
+    con.executescript("DELETE FROM laws; DELETE FROM frag; DELETE FROM text; DELETE FROM units;")
+
+    log.info("001: čtu znění …")
+    rows, skipped = choose_versions(read_versions(), today)
+    con.executemany(f"INSERT INTO laws ({LAW_COLS}) VALUES (?,?,?,?,?,?,?,?,?)", rows)
+    con.commit()
+    log.info("001: %d předpisů k indexaci, vynecháno %s", len(rows), skipped)
+
+    log.info("003: čtu strom fragmentů (~2 min) …")
+    need = extract_fragments(con, {r[3] for r in rows})
+    log.info("004: čtu texty fragmentů (~1 min) …")
+    extract_texts(con, need)
     con.execute("INSERT OR REPLACE INTO meta VALUES ('extract_done', ?)", (today,))
     con.commit()
-    log.info("004: %d textů. extract hotový.", n)
+    log.info("extract hotový.")
 
 
 # ── units ────────────────────────────────────────────────────────────────────
+def law_units(con: sqlite3.Connection, c: str, nazev: str, status: str, doc_id: int, iri: str, od: str) -> list:
+    """§ jednotky jednoho znění z tabulek frag + text."""
+    rows = [{"iri": r[0], "parent": r[1], "hex": r[2], "typ": r[3] or "", "text": clean(r[4])}
+            for r in con.execute("SELECT f.iri, f.parent, f.hex, t.typ, t.text FROM frag f "
+                                 "LEFT JOIN text t ON t.frag_id = f.frag_id WHERE f.doc_id = ?", (doc_id,))]
+    return units_for_law(c, nazev, status, iri, od, rows)
+
+
 def stage_units():
     con = db()
     laws = con.execute("SELECT akt_citace, nazev, status, doc_id, zneni_iri, ucinnost_od, priority FROM laws "
@@ -195,10 +244,7 @@ def stage_units():
     log.info("units: %d předpisů ke zpracování", len(laws))
     t0, total = time.time(), 0
     for i, (c, nazev, status, doc_id, iri, od, prio) in enumerate(laws, 1):
-        rows = [{"iri": r[0], "parent": r[1], "hex": r[2], "typ": r[3] or "", "text": clean(r[4])}
-                for r in con.execute("SELECT f.iri, f.parent, f.hex, t.typ, t.text FROM frag f "
-                                     "LEFT JOIN text t ON t.frag_id = f.frag_id WHERE f.doc_id = ?", (doc_id,))]
-        docs = units_for_law(c, nazev, status, iri, od, rows)
+        docs = law_units(con, c, nazev, status, doc_id, iri, od)
         con.executemany("INSERT OR REPLACE INTO units (id, akt_citace, priority, len, doc) VALUES (?,?,?,?,?)",
                         [(d.pop("_id"), c, prio, len(d["search_text"]), json.dumps(d, ensure_ascii=False))
                          for d in docs])

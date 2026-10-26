@@ -9,6 +9,9 @@
 - [x] Noční build plného indexu zakony-v2 (303 795 chunků, 3,9 h, 0 restartů; mezinárodní smlouvy zatím ne)
 - [x] Srovnání na plném indexu: ruční sada správný § 0 % (v1) → 80 % (v2 kNN), správný předpis 100 %
 - [x] MCP přepnut na zakony-v2 (run_mcp.sh), search_laws_semantic = čisté kNN
+- [x] Průběžná aktualizace scripts/update_v2.py (fáze 1): detekce změn, převzetí vektorů podle hashe, ES bez výpadku
+- [ ] První ostrý běh update_v2 (19 nových + 10 změněných + 62 jednorázově, stav 26. 10.)
+- [ ] Fáze 2: plánovač (launchd / cron na stroji ve VPN), notifikace, eval jako kontrola po aktualizaci
 - [ ] ES alias pro budoucí rebuildy
 - [x] Filtr nejistých/zastaralých předpisů v MCP (přetisky ven, neznamy/před 1945 ×0,94): nejisté výsledky 19 % → 4 %
 - [ ] Slovenské předpisy z doby federace ve výsledcích (460/1992 apod.)

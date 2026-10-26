@@ -233,8 +233,13 @@ def sync_es(con, max_priority: int, hours: float) -> bool:
         pusher.finish()
 
 
+def dumps_mtime() -> float:
+    """Stáří dumpu 001 (podle něj se vybírají znění) – čas poslední změny souboru (= Last-Modified při --download)."""
+    return (B.DUMP_DIR / "001PravniAktZneni.json.gz").stat().st_mtime
+
+
 def run_update(today: str, max_priority: int = 5, hours: float = 2.0, device: str = "mps",
-               mem_limit_gb: float = 12.0, dry_run: bool = False) -> tuple:
+               mem_limit_gb: float = 12.0, dry_run: bool = False, force: bool = False) -> tuple:
     """Vrací (návratový kód, souhrn)."""
     if not B.DB_PATH.exists():
         raise SystemExit("Chybí data/v2/v2.db – nejdřív plný build (scripts/run_v2_overnight.sh).")
@@ -251,6 +256,14 @@ def run_update(today: str, max_priority: int = 5, hours: float = 2.0, device: st
         raise SystemExit("DB nemá dokončený extract – nejdřív plný build.")
     if today < built_for:
         log.warning("cílové datum %s je dřív než současné %s – index se vrátí ke starším zněním", today, built_for)
+    # Starší dumpy než ty, ze kterých se naposledy aktualizovalo, by předpisy vyhlášené mezitím vyhodnotily jako
+    # „zrušené“ a smazaly je z indexu. Bez --force se nepokračuje.
+    used = (con.execute("SELECT value FROM meta WHERE key = 'dumps_mtime'").fetchone() or [None])[0]
+    current = dumps_mtime()
+    if used and current < float(used) and not force:
+        raise SystemExit(f"Dumpy v {B.DUMP_DIR} jsou starší ({date.fromtimestamp(current)}) než ty, ze kterých se "
+                         f"naposledy aktualizovalo ({date.fromtimestamp(float(used))}) – nové předpisy by se smazaly. "
+                         f"Použij --download (nebo V2_DUMP_DIR s novějšími dumpy); --force jen pokud je to záměr.")
 
     indexed = {r[0]: r for r in con.execute(f"SELECT {sel} FROM laws")}
     log.info("001: čtu znění, cílové datum %s (DB je k %s) …", today, built_for)
@@ -284,6 +297,7 @@ def run_update(today: str, max_priority: int = 5, hours: float = 2.0, device: st
         return B.EXIT_RESTART, summary
     remove_laws(con, plan["removed"])
     con.execute("INSERT OR REPLACE INTO meta VALUES ('extract_done', ?)", (today,))
+    con.execute("INSERT OR REPLACE INTO meta VALUES ('dumps_mtime', ?)", (str(max(current, float(used or 0))),))
     con.commit()
 
     ok = sync_es(con, max_priority, hours)
@@ -304,6 +318,7 @@ def main():
     ap.add_argument("--download", action="store_true", help="nejdřív stáhnout novější dumpy 001–004")
     ap.add_argument("--dry-run", action="store_true", help="jen vypsat plán změn, nesahat na DB ani ES")
     ap.add_argument("--max-priority", type=int, default=5, help="embedovat a indexovat priority <= N (jako build)")
+    ap.add_argument("--force", action="store_true", help="pokračovat i se staršími dumpy, než byly použity naposledy")
     ap.add_argument("--hours", type=float, default=2.0, help="jak dlouho čekat na ES při výpadku")
     ap.add_argument("--device", default="mps", choices=["mps", "cuda"])
     ap.add_argument("--gpu-mem-limit", type=float, default=float(os.getenv("GPU_MEM_LIMIT_GB", "12")))
@@ -327,7 +342,8 @@ def main():
     if args.download:                                     # stažení dumpů nemění DB ani index → i při --dry-run
         got = download_dumps(B.DUMP_DIR)
         log.info("staženo: %s", got or "nic, dumpy jsou aktuální")
-    rc, summary = run_update(args.date, args.max_priority, args.hours, args.device, args.gpu_mem_limit, args.dry_run)
+    rc, summary = run_update(args.date, args.max_priority, args.hours, args.device, args.gpu_mem_limit, args.dry_run,
+                             args.force)
     (B.ROOT / "logs" / f"update_v2_{args.date}.json").write_text(json.dumps(summary, ensure_ascii=False, indent=1))
     sys.exit(rc)
 

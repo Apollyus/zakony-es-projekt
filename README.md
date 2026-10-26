@@ -4,9 +4,9 @@ Tento projekt slouží k prohledávání české legislativy (e-Sbírka) pomocí
 LLM modelům přes **MCP server**. Nabízí textové vyhledávání (BM25) a sémantické vyhledávání nad vektory
 (model `BAAI/bge-m3`), které chápe význam dotazu.
 
-Aktuální index `zakony-v2` obsahuje **jen platná znění** 22 301 předpisů (303 795 § jednotek, 2,15 GB) – z dumpů
-e-Sbírky ze **5. 10. 2026**, znění účinná k **19. 10. 2026** (novely publikované po 5. 10. v něm nejsou; aktualizace viz
-[`docs/INDEX_V2.md`](docs/INDEX_V2.md#aktualizace-na-nová-znění-rebuild)). Embedding běží
+Aktuální index `zakony-v2` obsahuje **jen platná znění** 22 320 předpisů (304 022 § jednotek, ~2,2 GB) – z dumpů
+e-Sbírky z **26. 10. 2026**, znění účinná k **26. 10. 2026** (průběžně aktualizováno přes `scripts/update_v2.py`,
+viz [`docs/PROVOZ.md`](docs/PROVOZ.md)). Embedding běží
 lokálně na GPU Apple Silicon, ES server má 4,1 GB RAM (heap 2,15 GB) – viz [`docs/INDEX_V2.md`](docs/INDEX_V2.md).
 
 ---

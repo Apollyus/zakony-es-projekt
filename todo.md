@@ -10,7 +10,8 @@
 - [x] Srovnání na plném indexu: ruční sada správný § 0 % (v1) → 80 % (v2 kNN), správný předpis 100 %
 - [x] MCP přepnut na zakony-v2 (run_mcp.sh), search_laws_semantic = čisté kNN
 - [x] Průběžná aktualizace scripts/update_v2.py (fáze 1): detekce změn, převzetí vektorů podle hashe, ES bez výpadku
-- [ ] První ostrý běh update_v2 (19 nových + 10 změněných + 62 jednorázově, stav 26. 10.)
+- [x] První ostrý běh update_v2 (26. 10.): 19 nových + 72 změněných, 317 textů embedováno, ES = DB, eval beze změny
+- [x] Pojistka: update odmítne starší dumpy, než byly naposledy použity (jinak by smazal nové předpisy)
 - [ ] Fáze 2: plánovač (launchd / cron na stroji ve VPN), notifikace, eval jako kontrola po aktualizaci
 - [ ] ES alias pro budoucí rebuildy
 - [x] Filtr nejistých/zastaralých předpisů v MCP (přetisky ven, neznamy/před 1945 ×0,94): nejisté výsledky 19 % → 4 %

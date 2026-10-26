@@ -23,7 +23,8 @@ Jak kód funguje uvnitř: [`ARCHITEKTURA.md`](ARCHITEKTURA.md). Návrh indexu a 
   |---|---|
   | `data/v2/v2.db` | ~5 GB (+ ~0,6 GB po první aktualizaci – tabulka `vec_by_hash`) |
   | `data/v2/backups/` | 2 × ~5 GB (drží poslední 2 automatické zálohy) |
-  | dumpy `001–004*.json.gz` | ~1,9 GB |
+  | dumpy `001–004*.json.gz` (v kořeni repa; `--download` je přepisuje) | ~1,9 GB |
+| starší dumpy `data/dumps/<datum>/` (volitelné, ze serveru je už znovu stáhnout nejde) | ~1,9 GB za sadu |
   | model `BAAI/bge-m3` v `~/.cache/huggingface` | ~2,3 GB |
 
 - **Python:** kořenové `.venv` (Python 3.9+, `pip install -r requirements.txt`; build, aktualizace, eval)
@@ -64,8 +65,8 @@ cd zakony-es-projekt && git pull
 
 # 2) čerstvé dumpy + plán změn (DB ani ES se nemění)
 .venv/bin/python scripts/update_v2.py --download --dry-run
-#    stav 26. 10. 2026: ~19 nových, ~72 změněných (z toho 62 jen poprvé – sjednocení výběru
-#    mezi zněními se stejným datem účinnosti), 0 zrušených
+#    první ostrý běh 26. 10. 2026: 19 nových, 72 změněných (z toho 62 jen poprvé – sjednocení výběru
+#    mezi zněními se stejným datem účinnosti), 0 zrušených; 317 textů embedováno, ~4 min
 
 # 3) aktualizace (dumpy už jsou stažené)
 .venv/bin/python scripts/update_v2.py
@@ -138,6 +139,7 @@ Rollback jen jednoho předpisu zatím není – buď celá DB, nebo počkat na o
 | kód **75** | došla paměť GPU při embeddingu | spustit znovu; spočítané vektory se převezmou (`vec_by_hash`) |
 | „Jiná aktualizace už běží (data/v2/update.lock)“ | běží jiný proces aktualizace | počkat; zámek se uvolní sám s koncem procesu (soubor zůstává, to je v pořádku) |
 | `nekompletní stažení` | přerušené stahování dumpu | spustit znovu s `--download`; rozpracovaný `.part` se přepíše, starý dump zůstal netknutý |
+| „Dumpy … jsou starší … než ty, ze kterých se naposledy aktualizovalo“ | starší dumpy (např. jiný `V2_DUMP_DIR`) by předpisy vyhlášené mezitím smazaly jako „zrušené“ | `--download`, nebo `V2_DUMP_DIR` s novějšími dumpy; `--force` jen pokud je to záměr |
 | „Embedding běží jen na GPU“ | stroj bez MPS/CUDA | spustit na stroji s GPU |
 | „Chybí data/v2/v2.db“ / „DB nemá dokončený extract“ | chybí plný build | zkopírovat DB ze zálohy, nebo `bash scripts/run_v2_overnight.sh` |
 | „cílové datum … je dřív než současné“ (varování) | `--date` do minulosti | v pořádku, pokud je to záměr – index se vrátí ke starším zněním |

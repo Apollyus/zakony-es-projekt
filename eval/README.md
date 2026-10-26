@@ -61,8 +61,8 @@ Index pro retrievery `v2-*` se volí proměnnou `V2_INDEX` (výchozí `zakony-v2
 .venv/bin/python eval/run_eval.py --no-ragas \
   --retrievers v1-bm25-u,v1-hybrid-u,v1-knn-u,v2-bm25,v2-knn,v2-hybrid,v2-rerank
 
-# plný index v2 vs plný v1
-V2_INDEX=zakony-v2 .venv/bin/python eval/run_eval.py --no-ragas --retrievers bm25,hybrid,knn,v2-knn,v2-hybrid
+# plný index v2 (to samé spouští noční launcher na konci buildu)
+ES_INDEX=zakony-v2 V2_INDEX=zakony-v2 .venv/bin/python eval/run_eval.py --no-ragas --retrievers bm25,hybrid,v2-bm25,v2-knn,v2-knn-f4
 
 # skutečné nástroje MCP nad v2 (to, co dostane LLM klient)
 ES_INDEX=zakony-v2 .venv/bin/python eval/run_eval.py --no-ragas --retrievers bm25,hybrid

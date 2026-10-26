@@ -87,7 +87,7 @@ Skript postupně spustí `scripts/build_v2_index.py`:
 | `embed` | bge-m3 fp16 lokálně na MPS → vektor do SQLite → průběžně do ES | hodiny | tabulka `vectors`, index `zakony-v2` |
 | `push` | dorovná do ES, co se během výpadku neodeslalo | minuty | index `zakony-v2` |
 | `backup` | kopie celé DB včetně vektorů | ~1 min | `data/v2/backups/v2-YYYYMMDD.db` |
-| eval | srovnání v1 vs v2 bez LLM | ~5 min | `eval/results/full-v1-vs-v2-*` |
+| eval | nástroje MCP + varianty v2, bez LLM | ~5 min | `eval/results/full-v2-*` |
 
 Jak embedding probíhá: model běží **lokálně na Macu** (GPU, MPS). Po dávkách (desítky chunků): načíst ze SQLite →
 zembedovat → **uložit vektor do SQLite** (`vectors`, fp16, 2 KB/chunk, celkem ~0,6 GB) → poslat dávku do ES →
@@ -197,6 +197,28 @@ Rozhraní nástrojů je stejné (`search_laws_text`, `search_laws_semantic`, `ge
 seskupené podle předpisu; `citace` je ve tvaru „§ 140 Vražda“ a přibylo pole `cesta`. `get_law_detail`
 ve v2 přijímá IRI i citaci („40/2009 Sb.“). Model bge-m3 (~2,3 GB) se stáhne při prvním dotazu.
 
+## Aktualizace na nová znění (rebuild)
+
+Současný index je z dumpů e-Sbírky z **5. 10. 2026** se zněními účinnými k **19. 10. 2026**. Dumpy se na
+`opendata.eselpoint.gov.cz` aktualizují denně (001 ~170 MB, 002 ~5 MB, 003 ~1,2 GB, 004 ~0,5 GB). Nové datum
+s **původními** dumpy nedává smysl – novely publikované mezitím by chyběly.
+
+```bash
+# 1) čerstvé dumpy (do kořene repa, ~1,9 GB)
+for f in 001PravniAktZneni 002PravniAkt 003PravniAktZneniFragment 004PravniAktFragment; do
+  curl -fL -o "$f.json.gz" "https://opendata.eselpoint.gov.cz/datove-sady-esbirka/$f.json.gz"
+done
+# 2) záloha současné DB (vektory starého indexu) – extract --force ji přepíše
+.venv/bin/python scripts/build_v2_index.py backup --out /Volumes/Zaloha
+# 3) DB pro nové datum + build do NOVÉHO indexu (starý dál obsluhuje MCP)
+.venv/bin/python scripts/build_v2_index.py extract --date 2027-01-01 --force
+DATE=2027-01-01 V2_INDEX=zakony-v2-20270101 bash scripts/run_v2_overnight.sh     # ~4 h, končí evalem
+# 4) přepnout MCP: v mcp-server/run_mcp.sh ES_INDEX=zakony-v2-20270101, restartovat klienty
+# 5) po ověření smazat starý index: curl -X DELETE http://192.168.27.60:9200/zakony-v2
+```
+
+Dva indexy v2 se na server vejdou (2× ~2,2 GB disku, ~2× 0,35 GB „horkých“ dat) – na rozdíl od v1 + v2.
+
 ## Deník potíží (říjen 2026)
 
 Co se při evaluaci a stavbě v2 pokazilo a jak se to vyřešilo – ať je vidět, kde se v projektu ztrácel čas.
@@ -218,6 +240,8 @@ Co se při evaluaci a stavbě v2 pokazilo a jak se to vyřešilo – ať je vid�
 | Staré předpisy vedené jako platné / bez statusu | 42/1970 Sb. vyhrával nad 262/2006 Sb. u dovolené | přeřazení v MCP: přetisky ven, `neznamy` a před 1945 ×0,94; 19 % → 4 % nejistých výsledků |
 | Regex na přetisky hledal `zne…` | české „znění“ má „ě“ – chytal jen slovenské „znení“ (odhalil unit test) | `zn[eě]\w*` |
 | Žádná záloha vektorů v2 | ztráta indexu = hodiny embeddingu znovu | vektory lokálně v SQLite (fp16), fáze `push` a `backup` |
+| MCP visel při prvním dotazu (26. 10.) | úklid disku promazal cache HF – váhy bge-m3 0 B, `run_mcp.sh` přesto zapnul offline režim | offline jen při vahách > 1 GB (+ test); model znovu stažen |
+| Ranní eval launcheru volal smazaný v1 (`knn`) | po smazání v1 by retriever padal a výstup se jmenoval „v1 vs v2“ | eval jen nad v2 a nástroji MCP (`full-v2-*`) |
 | `push --recreate` po smazání indexu zvenku poslal 0 dokumentů | DB si myslela, že je vše odesláno (fake test to nezachytil, reálný test ano) | když index neexistuje, posílá se vše; varování při nesouladu počtů |
 
 ## Další kroky
@@ -227,9 +251,6 @@ Co se při evaluaci a stavbě v2 pokazilo a jak se to vyřešilo – ať je vid�
 - Ablace: zjistit, kolik dělá jednotka §, filtr znění a model (pilot s mpnet; pilot bez filtru).
 - Větší evaluační sada (ideálně otázky od uživatelů), oddělená od ladění.
 - Reranker (`bge-reranker-v2-m3`) zlepšil MRR jen málo a na CPU stojí ~9 s/dotaz → zatím jen v eval.
-- Pravidelný rebuild (nová znění): DB je postavená pro jedno datum a `extract` s jiným datem bez `--force` odmítne
-  (zahodil by hotové vektory). Postup: zálohovat `data/v2/v2.db` (`backup`), pak
-  `DATE=2027-01-01 V2_INDEX=zakony-v2-20270101 bash scripts/run_v2_overnight.sh` s předchozím
-  `build_v2_index.py extract --date 2027-01-01 --force`, ověřit evalem a přepnout `ES_INDEX` v `run_mcp.sh`
-  (lépe ES alias – zatím není). Embeduje se vše znovu (~4 h); nezměněné § by šlo převzít podle `_id`, zatím neimplementováno.
+- Rebuild zatím embeduje vše znovu (~4 h) – nezměněné § by šlo převzít podle `_id`; ES alias místo přepínání
+  `ES_INDEX` (viz [Aktualizace na nová znění](#aktualizace-na-nová-znění-rebuild)).
 - Historická znění: samostatný index, pokud bude potřeba hledat „jak to bylo k datu X“.

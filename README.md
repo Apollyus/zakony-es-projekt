@@ -4,7 +4,9 @@ Tento projekt slouží k prohledávání české legislativy (e-Sbírka) pomocí
 LLM modelům přes **MCP server**. Nabízí textové vyhledávání (BM25) a sémantické vyhledávání nad vektory
 (model `BAAI/bge-m3`), které chápe význam dotazu.
 
-Aktuální index `zakony-v2` obsahuje **jen platná znění** 22 301 předpisů (303 795 § jednotek, 2,15 GB). Embedding běží
+Aktuální index `zakony-v2` obsahuje **jen platná znění** 22 301 předpisů (303 795 § jednotek, 2,15 GB) – z dumpů
+e-Sbírky ze **5. 10. 2026**, znění účinná k **19. 10. 2026** (novely publikované po 5. 10. v něm nejsou; aktualizace viz
+[`docs/INDEX_V2.md`](docs/INDEX_V2.md#aktualizace-na-nová-znění-rebuild)). Embedding běží
 lokálně na GPU Apple Silicon, ES server má 4,1 GB RAM (heap 2,15 GB) – viz [`docs/INDEX_V2.md`](docs/INDEX_V2.md).
 
 ---
@@ -199,6 +201,12 @@ Při vývoji jsme museli překonat masivní hardwarová specifika tvého ES Dock
    - Ztráta indexu by znamenala hodiny embeddingu znovu.
    - **Řešení:** každý vektor se nejdřív uloží lokálně do `data/v2/v2.db` (fp16, celkem ~0,6 GB), teprve pak jde do ES;
      `build_v2_index.py push` index obnoví bez embeddingu (~30 min), `backup` dělá kopii DB. Výpadek VPN/ES už embedding nezastaví.
+
+8. **Po týdnu MCP visel při prvním dotazu**
+   - Úklid disku na Macu promazal cache Hugging Face: soubor s vahami bge-m3 zůstal prázdný (0 B) a `run_mcp.sh`
+     podle existence složky zapnul offline režim → model se nedal načíst ani stáhnout.
+   - **Řešení:** offline režim jen při celých vahách (> 1 GB, test `mcp-server/tests/test_run_mcp_sh.py`);
+     návod v [`mcp-server/README.md`](mcp-server/README.md#řešení-problémů).
 
 ---
 

@@ -27,6 +27,18 @@ U každého předpisu ve výsledku je `status`.
 
 Testy (mockovaný ES, bez sítě a modelu): `.venv/bin/python -m pytest -q`
 
+## Řešení problémů
+
+| projev | příčina | co udělat |
+|---|---|---|
+| první dotaz visí / klient (opencode) nic nevrátí | model bge-m3 v cache chybí nebo je poškozený (např. po úklidu disku) | zkontrolovat `du -sh ~/.cache/huggingface/hub/models--BAAI--bge-m3` – musí mít ~2,3 GB; jinak `rm -rf` té složky a spustit server znovu (stáhne se sám, potřebuje internet) |
+| `Connection refused` / timeout na `192.168.27.60:9200` | není zapnutá VPN, nebo neběží ES | zapnout VPN; `curl http://192.168.27.60:9200/_cluster/health` |
+| výsledky ze starého indexu | `ES_INDEX` nastavený jinde (klient, `.env`) | v logu při startu musí být `ESZakony: index zakony-v2, schéma v2` |
+| opencode „Insufficient balance“ | došel kredit modelu, ne chyba MCP | jiný model (`opencode run --model …`) nebo dobít kredit |
+
+`opencode mcp list` ukáže stav připojení (`✓ es-zakony connected`); první výpis po startu služby opencode může hlásit
+„No MCP servers configured“, než se služba rozběhne – stačí zopakovat.
+
 Výchozí index je `zakony-v2` (v kódu i v `run_mcp.sh`); při startu se do logu vypíše `ESZakony: index …, schéma …`.
 `run_mcp.sh` navíc zapne `HF_HUB_OFFLINE=1`, pokud je model v cache – start pak nekontaktuje Hugging Face.
 
